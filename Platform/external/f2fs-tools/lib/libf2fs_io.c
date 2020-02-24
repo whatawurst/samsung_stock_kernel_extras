@@ -114,8 +114,13 @@ static int sparse_write_blk(__u64 block, int count, const void *buf)
 	return 0;
 }
 
+#ifdef SPARSE_CALLBACK_USES_SIZE_T
+static int sparse_import_segment(void *UNUSED(priv), const void *data,
+		size_t len, unsigned int block, unsigned int nr_blocks)
+#else
 static int sparse_import_segment(void *UNUSED(priv), const void *data, int len,
 		unsigned int block, unsigned int nr_blocks)
+#endif
 {
 	/* Ignore chunk headers, only write the data */
 	if (!nr_blocks || len % F2FS_BLKSIZE)
@@ -155,7 +160,7 @@ static int sparse_write_blk(__u64 block, int count, const void *buf) { return 0;
 
 int dev_read(void *buf, __u64 offset, size_t len)
 {
-	int fd;
+	int fd, res;
 
 	if (c.sparse_mode)
 		return sparse_read_blk(offset / F2FS_BLKSIZE,
@@ -167,8 +172,10 @@ int dev_read(void *buf, __u64 offset, size_t len)
 
 	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
 		return -1;
-	if (read(fd, buf, len) < 0)
+	res = read(fd, buf, len);
+	if (res < 0)
 		return -1;
+	c.rbytes += res;
 	return 0;
 }
 
@@ -191,7 +198,7 @@ int dev_readahead(__u64 offset, size_t UNUSED(len))
 
 int dev_write(void *buf, __u64 offset, size_t len)
 {
-	int fd;
+	int fd, res;
 
 	if (c.dry_run)
 		return 0;
@@ -206,8 +213,10 @@ int dev_write(void *buf, __u64 offset, size_t len)
 
 	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
 		return -1;
-	if (write(fd, buf, len) < 0)
+	res = write(fd, buf, len);
+	if (res < 0)
 		return -1;
+	c.wbytes += res;
 	return 0;
 }
 
@@ -297,6 +306,10 @@ int f2fs_init_sparse_file(void)
 	}
 	blocks_count = c.device_size / F2FS_BLKSIZE;
 	blocks = calloc(blocks_count, sizeof(char *));
+	if (!blocks) {
+		MSG(0, "\tError: Calloc Failed for blocks!!!\n");
+		return -1;
+	}
 
 	return sparse_file_foreach_chunk(f2fs_sparse_file, true, false,
 				sparse_import_segment, NULL);
@@ -306,6 +319,7 @@ int f2fs_init_sparse_file(void)
 #endif
 }
 
+#define MAX_CHUNK_SIZE (256 * 1024 * 1024ULL)
 int f2fs_finalize_device(void)
 {
 	int i;
@@ -332,6 +346,12 @@ int f2fs_finalize_device(void)
 				chunk_start = -1;
 			} else if (blocks[j] && chunk_start == -1) {
 				chunk_start = j;
+			} else if (blocks[j] && (chunk_start != -1) &&
+				 (j + 1 - chunk_start >=
+					(MAX_CHUNK_SIZE / F2FS_BLKSIZE))) {
+				ret = sparse_merge_blocks(chunk_start,
+							  j + 1 - chunk_start);
+				chunk_start = -1;
 			}
 			ASSERT(!ret);
 		}
@@ -369,6 +389,7 @@ int f2fs_finalize_device(void)
 			MSG(0, "\tError: Failed to close device file!!!\n");
 			break;
 		}
+		free(c.devices[i].path);
 	}
 	close(c.kd);
 

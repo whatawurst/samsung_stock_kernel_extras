@@ -4,7 +4,7 @@ How to build Module for Platform
 
 [Step to build]
 1. Get android open source.
-    : version info - Android 9.0
+    : version info - Android 10.0
     ( Download site : http://source.android.com )
 
 2. Copy module that you want to build - to original android open source
@@ -49,15 +49,18 @@ PRODUCT_PACKAGES += \
    and then, you will be able to download what you want. 
    You might save time in finding the right one by making use of the search keyword below. 
 
-   - SamsungMessages_10.0.apk : "Messaging"
-   - SamsungConnect.apk : "SamsungConnect"
-   - Notes_Removable.apk : "Samsung Notes"
-   - SBrowser_9.0_Removable.apk : "SBrowser" (version : SBrowser v9)
-   - KidsHome_Installer.apk : "KidsHome"
-   - Fmm.apk : "FMM"   
-   - SecEmail_P.apk : "Email"
-   - SamsungCamera.apk : "Camera8"
-   - VoiceNote_5.0.apk : "Voice Recorder"
+   - Notes31.apk : "Samsung Notes"
    - MdecService : "MdecService"
-   - SmartSwitch.apk : "Smart Switch" (Version : 3.4)
+   - SmartSwitch.apk : "Smart Switch" (Version : 3.4)            
+   - SamsungMessages_10.0.apk : "Messaging"
+   - SecEmail_P.apk : "Email"
+   - SBrowser_10.0_Removable.apk : "SBrowser" (version : SBrowser v10)      
+   - SamsungConnect.apk : "SamsungConnect"
+   - KidsHome_Installer.apk : "KidsHome"
+   - SamsungCamera.apk : "Camera8"
    - AREmoji.apk : "AREmoji"
+   - Fmm.apk : "FMM"   
+   - BixbyVisionFramework3.apk: "BixbyVisionFramework"
+   - VoiceNote_5.0.apk : "Voice Recorder"
+   - DeXonPC.apk : "DeXonPC"
+   - LightweightWebEngine.apk : "lightweight-web-engine"

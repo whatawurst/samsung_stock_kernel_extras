@@ -36,8 +36,7 @@ err_getline:
 static struct basefs_entry *basefs_readline(FILE *f, const char *mountpoint,
 					    int *err)
 {
-	char *line = NULL, *saveptr1, *saveptr2, *block_range, *block;
-	int offset;
+	char *line = NULL, *saveptr1, *saveptr2, *block_range, *block, *tmp_path;
 	size_t len;
 	struct basefs_entry *entry = NULL;
 	blk64_t range_start, range_end;
@@ -54,17 +53,19 @@ static struct basefs_entry *basefs_readline(FILE *f, const char *mountpoint,
 
 	/*
 	 * With BASEFS version 1.0, a typical line looks like this:
-	 * /bin/mke2fs 5000-5004,8000,9000-9990
+	 * /bin/mke2fs|5000-5004,8000,9000-9990
 	 */
-	if (sscanf(line, "%ms%n", &entry->path, &offset) != 1)
+	tmp_path = strtok_r(line, "|", &block_range);
+	if (block_range == NULL || strlen(tmp_path) >= 4096)
 		goto err_sscanf;
 	len = strlen(mountpoint);
-	memmove(entry->path, entry->path + len, strlen(entry->path) - len + 1);
+	memmove(tmp_path, tmp_path + len, strlen(tmp_path) - len + 1);
 
-	while (line[offset] == ' ')
-		++offset;
+	entry->path = strndup(tmp_path, strlen(tmp_path));
+	if (!entry->path)
+		goto err_sscanf;
 
-	block_range = strtok_r(line + offset, ",\n", &saveptr1);
+	block_range = strtok_r(block_range, ",\n", &saveptr1);
 	while (block_range) {
 		block = strtok_r(block_range, "-", &saveptr2);
 		if (!block)

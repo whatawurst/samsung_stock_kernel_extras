@@ -221,7 +221,12 @@ namespace plog
 #ifdef _WIN32
                 return m_file != -1 ? ::_write(m_file, buf, static_cast<unsigned int>(count)) : -1;
 #else
-                return m_file != -1 ? static_cast<int>(::write(m_file, buf, count)) : -1;
+                int len = -1;
+                if (m_file != -1) {
+                    len = static_cast<int>(::write(m_file, buf, count));
+                    fsync(m_file);
+                }
+                return len;
 #endif
             }
 

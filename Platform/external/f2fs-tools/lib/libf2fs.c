@@ -7,6 +7,7 @@
  * Dual licensed under the GPL or LGPL version 2 licenses.
  */
 #define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <f2fs_fs.h>
 #include <stdio.h>
@@ -19,6 +20,7 @@
 #include <mntent.h>
 #endif
 #include <time.h>
+#include <sys/time.h>
 #include <sys/stat.h>
 #ifndef ANDROID_WINDOWS_HOST
 #include <sys/mount.h>
@@ -534,22 +536,21 @@ __u32 f2fs_inode_chksum(struct f2fs_node *node)
 /*
  * try to identify the root device
  */
-const char *get_rootdev()
+char *get_rootdev()
 {
 #if defined(ANDROID_WINDOWS_HOST) || defined(WITH_ANDROID)
 	return NULL;
 #else
 	struct stat sb;
 	int fd, ret;
-	char buf[32];
+	char buf[PATH_MAX + 1];
 	char *uevent, *ptr;
-
-	static char rootdev[PATH_MAX + 1];
+	char *rootdev;
 
 	if (stat("/", &sb) == -1)
 		return NULL;
 
-	snprintf(buf, 32, "/sys/dev/block/%u:%u/uevent",
+	snprintf(buf, PATH_MAX, "/sys/dev/block/%u:%u/uevent",
 		major(sb.st_dev), minor(sb.st_dev));
 
 	fd = open(buf, O_RDONLY);
@@ -566,6 +567,8 @@ const char *get_rootdev()
 	}
 
 	uevent = malloc(ret + 1);
+	ASSERT(uevent);
+
 	uevent[ret] = '\0';
 
 	ret = read(fd, uevent, ret);
@@ -576,8 +579,16 @@ const char *get_rootdev()
 		return NULL;
 
 	ret = sscanf(ptr, "DEVNAME=%s\n", buf);
-	snprintf(rootdev, PATH_MAX + 1, "/dev/%s", buf);
+	if (strlen(buf) == 0)
+		return NULL;
 
+	ret = strlen(buf) + 5;
+	rootdev = malloc(ret + 1);
+	if (!rootdev)
+		return NULL;
+	rootdev[ret] = '\0';
+
+	snprintf(rootdev, ret + 1, "/dev/%s", buf);
 	return rootdev;
 #endif
 }
@@ -589,25 +600,17 @@ void f2fs_init_configuration(void)
 {
 	int i;
 
+	memset(&c, 0, sizeof(struct f2fs_configuration));
 	c.ndevs = 1;
-	c.total_sectors = 0;
-	c.sector_size = 0;
 	c.sectors_per_blk = DEFAULT_SECTORS_PER_BLOCK;
 	c.blks_per_seg = DEFAULT_BLOCKS_PER_SEGMENT;
-	c.rootdev_name = get_rootdev();
 	c.wanted_total_sectors = -1;
 	c.wanted_sector_size = -1;
-	c.zoned_mode = 0;
-	c.zoned_model = 0;
-	c.zone_blocks = 0;
-#ifdef WITH_ANDROID
-	c.preserve_limits = 0;
-#else
+#ifndef WITH_ANDROID
 	c.preserve_limits = 1;
 #endif
 
 	for (i = 0; i < MAX_DEVICES; i++) {
-		memset(&c.devices[i], 0, sizeof(struct device_info));
 		c.devices[i].fd = -1;
 		c.devices[i].sector_size = DEFAULT_SECTOR_SIZE;
 		c.devices[i].end_blkaddr = -1;
@@ -615,19 +618,23 @@ void f2fs_init_configuration(void)
 	}
 
 	/* calculated by overprovision ratio */
-	c.reserved_segments = 0;
-	c.overprovision = 0;
 	c.segs_per_sec = 1;
 	c.secs_per_zone = 1;
 	c.segs_per_zone = 1;
-	c.heap = 0;
 	c.vol_label = "";
 	c.trim = 1;
-	c.trimmed = 0;
-	c.ro = 0;
 	c.kd = -1;
-	c.dry_run = 0;
 	c.fixed_time = -1;
+
+	/* default root owner */
+	c.root_uid = getuid();
+	c.root_gid = getgid();
+
+	/* fsck profiling parameters */
+	c.exit_code = 0;
+	c.rbytes = 0;
+	c.wbytes = 0;
+	c.elapsed_time = 0;
 }
 
 #ifdef HAVE_SETMNTENT
@@ -662,9 +669,13 @@ int f2fs_dev_is_umounted(char *path)
 	struct stat *st_buf;
 	int is_rootdev = 0;
 	int ret = 0;
+	char *rootdev_name = get_rootdev();
 
-	if (c.rootdev_name && !strcmp(path, c.rootdev_name))
-		is_rootdev = 1;
+	if (rootdev_name) {
+		if (!strcmp(path, rootdev_name))
+			is_rootdev = 1;
+		free(rootdev_name);
+	}
 
 	/*
 	 * try with /proc/mounts fist to detect RDONLY.
@@ -707,6 +718,8 @@ int f2fs_dev_is_umounted(char *path)
 	 * the file system. In this case, we should not format.
 	 */
 	st_buf = malloc(sizeof(struct stat));
+	ASSERT(st_buf);
+
 	if (stat(path, st_buf) == 0 && S_ISBLK(st_buf->st_mode)) {
 		int fd = open(path, O_RDONLY | O_EXCL);
 
@@ -752,8 +765,13 @@ void get_kernel_uname_version(__u8 *version)
 	if (uname(&buf))
 		return;
 
+#if !defined(WITH_KERNEL_VERSION)
 	snprintf((char *)version,
 		VERSION_LEN, "%s %s", buf.release, buf.version);
+#else
+	snprintf((char *)version,
+		VERSION_LEN, "%s", buf.release);
+#endif
 #else
 	memset(version, 0, VERSION_LEN);
 #endif
@@ -797,20 +815,41 @@ int get_device_info(int i)
 	struct device_info *dev = c.devices + i;
 
 	if (c.sparse_mode) {
-		fd = open((char *)dev->path, O_RDWR | O_CREAT | O_BINARY, 0644);
-	} else {
-		fd = open((char *)dev->path, O_RDWR);
+		fd = open(dev->path, O_RDWR | O_CREAT | O_BINARY, 0644);
+		if (fd < 0) {
+			MSG(0, "\tError: Failed to open a sparse file!\n");
+			return -1;
+		}
+	}
+
+	stat_buf = malloc(sizeof(struct stat));
+	ASSERT(stat_buf);
+
+	if (!c.sparse_mode) {
+		if (stat(dev->path, stat_buf) < 0 ) {
+			MSG(0, "\tError: Failed to get the device stat!\n");
+			free(stat_buf);
+			return -1;
+		}
+
+		if (S_ISBLK(stat_buf->st_mode) && !c.force)
+			fd = open(dev->path, O_RDWR | O_EXCL);
+		else
+			fd = open(dev->path, O_RDWR);
 	}
 	if (fd < 0) {
 		MSG(0, "\tError: Failed to open the device!\n");
+		free(stat_buf);
 		return -1;
 	}
 
 	dev->fd = fd;
 
 	if (c.sparse_mode) {
-		if (f2fs_init_sparse_file())
+		if (f2fs_init_sparse_file()) {
+			free(stat_buf);
 			return -1;
+		}
 	}
 
 	if (c.kd == -1) {
@@ -821,13 +860,6 @@ int get_device_info(int i)
 			MSG(0, "\tInfo: No support kernel version!\n");
 			c.kd = -2;
 		}
-	}
-
-	stat_buf = malloc(sizeof(struct stat));
-	if (fstat(fd, stat_buf) < 0 ) {
-		MSG(0, "\tError: Failed to get the device stat!\n");
-		free(stat_buf);
-		return -1;
 	}
 
 	if (c.sparse_mode) {
@@ -880,13 +912,8 @@ int get_device_info(int i)
 		io_hdr.timeout = 1000;
 
 		if (!ioctl(fd, SG_IO, &io_hdr)) {
-			int i = 16;
-
-			MSG(0, "Info: [%s] Disk Model: ",
-					dev->path);
-			while (reply_buffer[i] != '`' && i < 80)
-				printf("%c", reply_buffer[i++]);
-			printf("\n");
+			MSG(0, "Info: [%s] Disk Model: %.16s\n",
+					dev->path, reply_buffer+16);
 		}
 #endif
 	} else {
@@ -1096,4 +1123,208 @@ int f2fs_get_device_info(void)
 				c.total_sectors, (c.total_sectors *
 					(c.sector_size >> 9)) >> 11);
 	return 0;
+}
+
+int get_new_sb(struct f2fs_super_block *sb)
+{
+	u_int32_t zone_size_bytes;
+	u_int64_t zone_align_start_offset;
+	u_int32_t blocks_for_sit, blocks_for_nat, blocks_for_ssa;
+	u_int32_t sit_segments, nat_segments, diff, total_meta_segments;
+	u_int32_t total_valid_blks_available;
+	u_int32_t sit_bitmap_size, max_sit_bitmap_size;
+	u_int32_t max_nat_bitmap_size, max_nat_segments;
+	u_int32_t segment_size_bytes = 1 << (get_sb(log_blocksize) +
+					get_sb(log_blocks_per_seg));
+	u_int32_t blks_per_seg = 1 << get_sb(log_blocks_per_seg);
+	u_int32_t segs_per_zone = get_sb(segs_per_sec) * get_sb(secs_per_zone);
+
+	set_sb(block_count, c.target_sectors >>
+				get_sb(log_sectors_per_block));
+
+	zone_size_bytes = segment_size_bytes * segs_per_zone;
+	zone_align_start_offset =
+		((u_int64_t) c.start_sector * DEFAULT_SECTOR_SIZE +
+		2 * F2FS_BLKSIZE + zone_size_bytes - 1) /
+		zone_size_bytes * zone_size_bytes -
+		(u_int64_t) c.start_sector * DEFAULT_SECTOR_SIZE;
+
+	set_sb(segment_count, (c.target_sectors * c.sector_size -
+				zone_align_start_offset) / segment_size_bytes /
+				c.segs_per_sec * c.segs_per_sec);
+
+	if (c.safe_resize)
+		goto safe_resize;
+
+	blocks_for_sit = SIZE_ALIGN(get_sb(segment_count), SIT_ENTRY_PER_BLOCK);
+	sit_segments = SEG_ALIGN(blocks_for_sit);
+	set_sb(segment_count_sit, sit_segments * 2);
+	set_sb(nat_blkaddr, get_sb(sit_blkaddr) +
+				get_sb(segment_count_sit) * blks_per_seg);
+
+	total_valid_blks_available = (get_sb(segment_count) -
+			(get_sb(segment_count_ckpt) +
+			get_sb(segment_count_sit))) * blks_per_seg;
+	blocks_for_nat = SIZE_ALIGN(total_valid_blks_available,
+					NAT_ENTRY_PER_BLOCK);
+
+	if (c.large_nat_bitmap) {
+		nat_segments = SEG_ALIGN(blocks_for_nat) *
+						DEFAULT_NAT_ENTRY_RATIO / 100;
+		set_sb(segment_count_nat, nat_segments ? nat_segments : 1);
+
+		max_nat_bitmap_size = (get_sb(segment_count_nat) <<
+						get_sb(log_blocks_per_seg)) / 8;
+		set_sb(segment_count_nat, get_sb(segment_count_nat) * 2);
+	} else {
+		set_sb(segment_count_nat, SEG_ALIGN(blocks_for_nat));
+		max_nat_bitmap_size = 0;
+	}
+
+	sit_bitmap_size = ((get_sb(segment_count_sit) / 2) <<
+				get_sb(log_blocks_per_seg)) / 8;
+	if (sit_bitmap_size > MAX_SIT_BITMAP_SIZE)
+		max_sit_bitmap_size = MAX_SIT_BITMAP_SIZE;
+	else
+		max_sit_bitmap_size = sit_bitmap_size;
+
+	if (c.large_nat_bitmap) {
+		/* use cp_payload if free space of f2fs_checkpoint is not enough */
+		if (max_sit_bitmap_size + max_nat_bitmap_size >
+						MAX_BITMAP_SIZE_IN_CKPT) {
+			u_int32_t diff =  max_sit_bitmap_size +
+						max_nat_bitmap_size -
+						MAX_BITMAP_SIZE_IN_CKPT;
+			set_sb(cp_payload, F2FS_BLK_ALIGN(diff));
+		} else {
+			set_sb(cp_payload, 0);
+		}
+	} else {
+		/*
+		 * It should be reserved minimum 1 segment for nat.
+		 * When sit is too large, we should expand cp area.
+		 * It requires more pages for cp.
+		 */
+		if (max_sit_bitmap_size > MAX_SIT_BITMAP_SIZE_IN_CKPT) {
+			max_nat_bitmap_size = CP_CHKSUM_OFFSET - sizeof(struct f2fs_checkpoint) + 1;
+			set_sb(cp_payload, F2FS_BLK_ALIGN(max_sit_bitmap_size));
+		} else {
+			max_nat_bitmap_size = CP_CHKSUM_OFFSET - sizeof(struct f2fs_checkpoint) + 1
+				- max_sit_bitmap_size;
+			set_sb(cp_payload, 0);
+		}
+
+		max_nat_segments = (max_nat_bitmap_size * 8) >>
+					get_sb(log_blocks_per_seg);
+
+		if (get_sb(segment_count_nat) > max_nat_segments)
+			set_sb(segment_count_nat, max_nat_segments);
+
+		set_sb(segment_count_nat, get_sb(segment_count_nat) * 2);
+	}
+
+	set_sb(ssa_blkaddr, get_sb(nat_blkaddr) +
+				get_sb(segment_count_nat) * blks_per_seg);
+
+	total_valid_blks_available = (get_sb(segment_count) -
+			(get_sb(segment_count_ckpt) +
+			get_sb(segment_count_sit) +
+			get_sb(segment_count_nat))) * blks_per_seg;
+
+	blocks_for_ssa = total_valid_blks_available / blks_per_seg + 1;
+
+	set_sb(segment_count_ssa, SEG_ALIGN(blocks_for_ssa));
+
+	total_meta_segments = get_sb(segment_count_ckpt) +
+		get_sb(segment_count_sit) +
+		get_sb(segment_count_nat) +
+		get_sb(segment_count_ssa);
+
+	diff = total_meta_segments % segs_per_zone;
+	if (diff)
+		set_sb(segment_count_ssa, get_sb(segment_count_ssa) +
+			(segs_per_zone - diff));
+
+	set_sb(main_blkaddr, get_sb(ssa_blkaddr) + get_sb(segment_count_ssa) *
+			 blks_per_seg);
+
+safe_resize:
+	set_sb(segment_count_main, get_sb(segment_count) -
+			(get_sb(segment_count_ckpt) +
+			 get_sb(segment_count_sit) +
+			 get_sb(segment_count_nat) +
+			 get_sb(segment_count_ssa)));
+
+	set_sb(section_count, get_sb(segment_count_main) /
+						get_sb(segs_per_sec));
+
+	set_sb(segment_count_main, get_sb(section_count) *
+						get_sb(segs_per_sec));
+
+	/* Let's determine the best reserved and overprovisioned space */
+	c.new_overprovision = get_best_overprovision(sb);
+	c.new_reserved_segments =
+		(2 * (100 / c.new_overprovision + 1) + 6) *
+						get_sb(segs_per_sec);
+
+	if ((get_sb(segment_count_main) - 2) < c.new_reserved_segments ||
+		get_sb(segment_count_main) * blks_per_seg >
+						get_sb(block_count)) {
+		MSG(0, "\tError: Device size is not sufficient for F2FS volume, "
+			"more segment needed =%u",
+			c.new_reserved_segments -
+			(get_sb(segment_count_main) - 2));
+		return -1;
+	}
+	return 0;
+}
+
+unsigned long long get_time_diff(int status)
+{
+	static struct timespec end, start = {0,};
+	static unsigned long long diff = 0;
+
+	if (status == 0) {
+		diff = 0;
+		if (clock_gettime(CLOCK_MONOTONIC, &start) < 0)
+			printf("%s(%d): clock_gettime failed(%d)\n",
+					__func__, __LINE__, errno);
+	} else {
+		if (clock_gettime(CLOCK_MONOTONIC, &end) < 0)
+			printf("%s(%d): clock_gettime failed(%d)\n",
+					__func__, __LINE__, errno);
+		else
+			diff = (end.tv_sec - start.tv_sec) * 1000 +
+				(end.tv_nsec - start.tv_nsec) / 1000000;
+	}
+
+	return diff;
+}
+
+void stlog(char const *fmt, ...)
+{
+	int fd, len;
+	char buffer[1024];
+	char *pbuf;
+	va_list ap;
+
+	strcpy(buffer, "<fsck.f2fs> ");
+	len = strlen("<fsck.f2fs> ");
+	pbuf = buffer + len;
+
+	va_start(ap, fmt);
+	len += vsprintf(pbuf, fmt, ap);
+	va_end(ap);
+
+	MSG(0, pbuf);
+
+	fd = open("/proc/fslog/stlog", O_RDWR);
+	if (fd < 0)
+		MSG(0, "Can`t open /proc/fslog/stlog");
+	else {
+		int ret = write(fd, buffer, len);
+		if (ret < 0)
+			MSG(0, "Can`t write /proc/fslog/stlog");
+		close(fd);
+	}
 }

@@ -108,6 +108,9 @@ static void write_all_xattrs(struct f2fs_sb_info *sbi,
 
 	ret = dev_write_block(xattr_node, blkaddr);
 	ASSERT(ret >= 0);
+
+	if (xnid)
+		free(xattr_node);
 }
 
 int f2fs_setxattr(struct f2fs_sb_info *sbi, nid_t ino, int index, const char *name,
@@ -137,8 +140,10 @@ int f2fs_setxattr(struct f2fs_sb_info *sbi, nid_t ino, int index, const char *na
 	if (ino < 3)
 		return -EINVAL;
 
+#ifndef CONFIG_FIVE
 	/* Now We just support selinux */
 	ASSERT(index == F2FS_XATTR_INDEX_SECURITY);
+#endif
 
 	get_node_info(sbi, ino, &ni);
 	inode = calloc(BLOCK_SZ, 1);
@@ -223,6 +228,7 @@ int f2fs_setxattr(struct f2fs_sb_info *sbi, nid_t ino, int index, const char *na
 	ret = dev_write_block(inode, ni.blk_addr);
 	ASSERT(ret >= 0);
 exit:
+	free(inode);
 	free(base_addr);
 	return error;
 }

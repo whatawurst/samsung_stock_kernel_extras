@@ -281,8 +281,10 @@ static int report_assertion_avtab_matches(avtab_key_t *k, avtab_datum_t *d, void
 					a->errors += report_assertion_extended_permissions(handle,p, avrule,
 											i, j, cp, perms, k, avtab);
 				} else {
+// [ SEC_SELINUX_PORTING_COMMON
 					//Fixed build error when including neverallow
 					//a->errors++;
+// ] SEC_SELINUX_PORTING_COMMON
 					report_failure(handle, p, avrule, i, j, cp, perms);
 				}
 			}

@@ -8,6 +8,7 @@
 #include "iptables_logger.h"
 
 #ifdef DELAY_CHECK
+#if 0 // logging full commnds on ship-version too.
 int IsShipBuild()
 {
 	char chk_ship[PROPERTY_VALUE_MAX];
@@ -17,6 +18,7 @@ int IsShipBuild()
 		return 1;
 	return 0;
 }
+#endif
 
 void _pr_tag(char *_str, int *_p)
 {
@@ -55,7 +57,9 @@ void __attribute__((noreturn)) __exit(int err)
 
 void iptables_log(int argc, char *argv[])
 {
+#if 0 // logging full commnds on ship-version too.
 	int ship = IsShipBuild();
+#endif
 	int i = 0, pos = 0, pr_log = 0;
 	static char logbuf[lOGBUF_SIZE];
 

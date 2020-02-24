@@ -10,8 +10,8 @@
  * @par Copyright: (c) Samsung Electronics Co, Ltd 2016. All rights reserved.
 **/
 
-#ifndef FIVECONTEXTS_H
-#define FIVECONTEXTS_H
+#ifndef XATTR_TABLE_H
+#define XATTR_TABLE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -57,4 +57,4 @@ static inline void xattr_table_close(void *table) {
 }
 #endif
 
-#endif // FIVECONTEXTS_H
+#endif // XATTR_TABLE_H

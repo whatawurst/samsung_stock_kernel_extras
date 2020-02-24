@@ -104,7 +104,7 @@ errcode_t ext2fs_create_resize_inode(ext2_filsys fs)
 	if (fs->blocksize == 1024 && sb_blk == 0)
 		sb_blk = 1;
 
-	/* Maximum possible file size (we donly use the dindirect blocks) */
+	/* Maximum possible file size (we only use double indirect blocks) */
 	apb = EXT2_ADDR_PER_BLOCK(sb);
 	if ((dindir_blk = inode.i_block[EXT2_DIND_BLOCK])) {
 #ifdef RES_GDT_DEBUG
@@ -227,6 +227,15 @@ out_inode:
 	       inode.i_size);
 #endif
 	if (inode_dirty) {
+		/* resize inode i_size is fixed to maximum */
+		inode_size = apb*apb + apb + EXT2_NDIR_BLOCKS;
+		inode_size *= fs->blocksize;
+		inode.i_size = inode_size & 0xFFFFFFFF;
+		inode.i_size_high = (inode_size >> 32) & 0xFFFFFFFF;
+		if(inode.i_size_high) {
+			sb->s_feature_ro_compat |=
+				EXT2_FEATURE_RO_COMPAT_LARGE_FILE;
+		}
 		inode.i_atime = inode.i_mtime = fs->now ? fs->now : time(0);
 		retval2 = ext2fs_write_new_inode(fs, EXT2_RESIZE_INO, &inode);
 		if (!retval)

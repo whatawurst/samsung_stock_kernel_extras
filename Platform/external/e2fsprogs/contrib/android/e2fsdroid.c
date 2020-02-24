@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <getopt.h>
 #include <string.h>
 #include <unistd.h>
@@ -14,6 +13,15 @@
 #include "basefs_allocator.h"
 #include "create_inode.h"
 #include "xattr_table.h"
+
+#ifndef UID_GID_MAP_MAX_EXTENTS
+/*
+ * The value is defined in linux/user_namspace.h.
+ * The value is (arbitrarily) 5 in 4.14 and earlier, or 340 in 4.15 and later.
+ * Here, the bigger value is taken. See also man user_namespace(7).
+ */
+#define UID_GID_MAP_MAX_EXTENTS 340
+#endif
 
 static char *prog_name = "e2fsdroid";
 static char *in_file;
@@ -33,8 +41,9 @@ static int android_sparse_file = 1;
 static void usage(int ret)
 {
 	fprintf(stderr, "%s [-B block_list] [-D basefs_out] [-T timestamp]\n"
-			"\t[-C fs_config] [-S file_contexts] [-X xattr_table_file][-p product_out]\n"
-			"\t[-a mountpoint] [-d basefs_in] [-f src_dir] [-e] [-s] image\n",
+			"\t[-C fs_config] [-S file_contexts] [-X xattr_table_file] [-p product_out]\n"
+			"\t[-a mountpoint] [-d basefs_in] [-f src_dir] [-e] [-s]\n"
+			"\t[-u uid-mapping] [-g gid-mapping] image\n",
                 prog_name);
 	exit(ret);
 }
@@ -55,6 +64,135 @@ static char *absolute_path(const char *file)
 	} else
 		ret = strdup(file);
 	return ret;
+}
+
+static int parse_ugid_map_entry(char* line, struct ugid_map_entry* result)
+{
+	char *token, *token_saveptr;
+	size_t num_tokens;
+	unsigned int *parsed[] = {&result->child_id,
+				  &result->parent_id,
+				  &result->length};
+	for (token = strtok_r(line, " ", &token_saveptr), num_tokens = 0;
+	     token && num_tokens < 3;
+	     token = strtok_r(NULL, " ", &token_saveptr), ++num_tokens) {
+		char* endptr = NULL;
+		*parsed[num_tokens] = strtoul(token, &endptr, 10);
+		if ((*parsed[num_tokens] == ULONG_MAX && errno) || *endptr) {
+			fprintf(stderr, "Malformed u/gid mapping line\n");
+			return 0;
+		}
+	}
+	if (num_tokens < 3 || strtok_r(NULL, " ", &token_saveptr) != NULL) {
+		fprintf(stderr, "Malformed u/gid mapping line\n");
+		return 0;
+	}
+	if (result->child_id + result->length < result->child_id ||
+	    result->parent_id + result->length < result->parent_id) {
+		fprintf(stderr, "u/gid mapping overflow\n");
+		return 0;
+	}
+	return 1;
+}
+
+/*
+ * Returns 1 if [begin1, begin1+length1) and [begin2, begin2+length2) have
+ * overlapping range. Otherwise 0.
+ */
+static int is_overlapping(unsigned int begin1, unsigned int length1,
+			  unsigned int begin2, unsigned int length2)
+{
+	unsigned int end1 = begin1 + length1;
+	unsigned int end2 = begin2 + length2;
+	return !(end1 <= begin2 || end2 <= begin1);
+}
+
+/*
+ * Verifies if the given mapping works.
+ * - Checks if the number of entries is less than or equals to
+ *   UID_GID_MAP_MAX_EXTENTS.
+ * - Checks if there is no overlapped ranges.
+ * Returns 1 if valid, otherwise 0.
+ */
+static int is_valid_ugid_map(const struct ugid_map* mapping)
+{
+	size_t i, j;
+
+	if (mapping->size > UID_GID_MAP_MAX_EXTENTS) {
+		fprintf(stderr, "too many u/gid mapping entries\n");
+		return 0;
+	}
+
+	for (i = 0; i < mapping->size; ++i) {
+		const struct ugid_map_entry *entry1 = &mapping->entries[i];
+		for (j = i + 1; j < mapping->size; ++j) {
+			const struct ugid_map_entry *entry2 =
+				&mapping->entries[j];
+			if (is_overlapping(entry1->child_id, entry1->length,
+					   entry2->child_id, entry2->length)) {
+				fprintf(stderr,
+					"Overlapping child u/gid: [%d %d %d],"
+					" [%d %d %d]\n",
+					entry1->child_id, entry1->parent_id,
+					entry1->length, entry2->child_id,
+					entry2->parent_id, entry2->length);
+				return 0;
+			}
+			if (is_overlapping(entry1->parent_id, entry1->length,
+					   entry2->parent_id, entry2->length)) {
+				fprintf(stderr,
+					"Overlapping parent u/gid: [%d %d %d],"
+					" [%d %d %d]\n",
+					entry1->child_id, entry1->parent_id,
+					entry1->length, entry2->child_id,
+					entry2->parent_id, entry2->length);
+				return 0;
+			}
+		}
+	}
+	return 1;
+}
+
+/*
+ * Parses the UID/GID mapping argument. The argument could be a multi-line
+ * string (separated by '\n', no trailing '\n' is allowed). Each line must
+ * contain exact three integer tokens; the first token is |child_id|,
+ * the second is |parent_id|, and the last is |length| of the mapping range.
+ * See also user_namespace(7) man page.
+ * On success, the parsed entries are stored in |result|, and it returns 1.
+ * Otherwise, returns 0.
+ */
+static int parse_ugid_map(char* arg, struct ugid_map* result)
+{
+	int i;
+	char *line, *line_saveptr;
+	size_t current_index;
+
+	/* Count the number of lines. */
+	result->size = 1;
+	for (i = 0; arg[i]; ++i) {
+		if (arg[i] == '\n')
+			++result->size;
+	}
+
+	/* Allocate memory for entries. */
+	result->entries = malloc(sizeof(struct ugid_map_entry) * result->size);
+	if (!result->entries) {
+		result->size = 0;
+		return 0;
+	}
+
+	/* Parse each line */
+	for (line = strtok_r(arg, "\n", &line_saveptr), current_index = 0;
+	     line;
+	     line = strtok_r(NULL, "\n", &line_saveptr), ++current_index) {
+		if (!parse_ugid_map_entry(
+			line, &result->entries[current_index])) {
+			return 0;
+		}
+	}
+
+	return is_valid_ugid_map(result);
 }
 
 static unsigned long get_contents_size(char *src_dir)
@@ -94,12 +232,12 @@ int main(int argc, char *argv[])
 	ext2_ino_t free_inodes_count;
 	blk64_t blocks_count;
 	blk64_t free_blocks_count;
-
+	struct ugid_map uid_map = { 0, NULL }, gid_map = { 0, NULL };
 	void *xattr_table = NULL;
 
 	add_error_table(&et_ext2_error_table);
 
-	while ((c = getopt (argc, argv, "T:C:S:X:p:a:D:d:B:f:es")) != EOF) {
+	while ((c = getopt (argc, argv, "T:C:S:X:p:a:D:d:B:f:esu:g:")) != EOF) {
 		switch (c) {
 		case 'T':
 			fixed_time = strtoul(optarg, &p, 0);
@@ -127,12 +265,14 @@ int main(int argc, char *argv[])
 		case 'X':
 			xattr_table = xattr_table_open(optarg);
 			if (!xattr_table) {
-				fprintf(stderr, "failed to load xattr_table_file: %s\n", optarg);
+				fprintf(stderr, "failed to load xattr_table_file: %s\n",
+					optarg);
 				exit(EXIT_FAILURE);
 			}
 			break;
 		case 'p':
 			product_out = absolute_path(optarg);
+			android_configure = 1;
 			break;
 		case 'a':
 			mountpoint = strdup(optarg);
@@ -154,6 +294,16 @@ int main(int argc, char *argv[])
 			break;
 		case 's':
 			flags |= EXT2_FLAG_SHARE_DUP;
+			break;
+		case 'u':
+			if (!parse_ugid_map(optarg, &uid_map))
+				exit(EXIT_FAILURE);
+			android_configure = 1;
+			break;
+		case 'g':
+			if (!parse_ugid_map(optarg, &gid_map))
+				exit(EXIT_FAILURE);
+			android_configure = 1;
 			break;
 		default:
 			usage(EXIT_FAILURE);
@@ -182,6 +332,7 @@ int main(int argc, char *argv[])
 
 	if (src_dir) {
 		unsigned long free_blocks = ext2fs_free_blocks_count(fs->super) * 4;
+
 		ext2fs_read_bitmaps(fs);
 		if (basefs_in) {
 			retval = base_fs_alloc_load(fs, basefs_in, mountpoint);
@@ -224,8 +375,10 @@ int main(int argc, char *argv[])
 	}
 
 	if (android_configure) {
-        retval = android_configure_fs(fs, src_dir, product_out, mountpoint,
-				seopt_file, nr_opt, fs_config_file, fixed_time, xattr_table);
+		retval = android_configure_fs(
+			fs, src_dir, product_out, mountpoint, seopt_file,
+			nr_opt, fs_config_file, fixed_time, &uid_map,
+			&gid_map, xattr_table);
 		if (retval) {
 			com_err(prog_name, retval, "%s",
 				"while configuring the file system");

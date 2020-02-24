@@ -34,6 +34,9 @@
 #ifndef IPPROTO_DCCP
 #define IPPROTO_DCCP 33
 #endif
+#ifndef IPPROTO_SCTP
+#define IPPROTO_SCTP 132
+#endif
 
 #include <sepol/policydb/policydb.h>
 #include <sepol/policydb/polcaps.h>
@@ -51,6 +54,7 @@
 #include "cil_binary.h"
 #include "cil_symtab.h"
 #include "cil_find.h"
+#include "cil_build_ast.h"
 
 /* There are 44000 filename_trans in current fedora policy. 1.33 times this is the recommended
  * size of a hashtable. The next power of 2 of this is 2 ** 16.
@@ -927,7 +931,7 @@ int cil_sensalias_to_policydb(policydb_t *pdb, struct cil_alias *cil_alias)
 
 exit:
 	level_datum_destroy(sepol_alias);
-	free(sepol_level);
+	free(sepol_alias);
 	free(key);
 	return rc;
 }
@@ -1760,11 +1764,13 @@ int __cil_avrulex_ioctl_to_hashtable(hashtab_t h, uint16_t kind, uint32_t src, u
 		hashtab_xperms = cil_malloc(sizeof(*hashtab_xperms));
 		rc = ebitmap_cpy(hashtab_xperms, xperms);
 		if (rc != SEPOL_OK) {
+			free(hashtab_xperms);
 			free(avtab_key);
 			goto exit;
 		}
 		rc = hashtab_insert(h, (hashtab_key_t)avtab_key, hashtab_xperms);
 		if (rc != SEPOL_OK) {
+			free(hashtab_xperms);
 			free(avtab_key);
 			goto exit;
 		}
@@ -2069,6 +2075,7 @@ static void __cil_expr_to_string(struct cil_list *expr, enum cil_flavor flavor, 
 		char *c2 = NULL;
 		__cil_expr_to_string_helper(curr, flavor, &c1);
 		for (curr = curr->next; curr; curr = curr->next) {
+			s1 = NULL;
 			__cil_expr_to_string_helper(curr, flavor, &s1);
 			cil_asprintf(&c2, "%s %s", c1, s1);
 			free(c1);
@@ -2154,6 +2161,7 @@ static int __cil_cond_expr_to_sepol_expr_helper(policydb_t *pdb, struct cil_list
 			op->expr_type = COND_NEQ;
 			break;
 		default:
+			free(op);
 			goto exit;
 		}
 
@@ -2280,6 +2288,7 @@ int cil_booleanif_to_policydb(policydb_t *pdb, const struct cil_db *db, struct c
 
 	cond_expr_destroy(tmp_cond->expr);
 	free(tmp_cond);
+	tmp_cond = NULL;
 
 	for (cb_node = node->cl_head; cb_node != NULL; cb_node = cb_node->next) {
 		if (cb_node->flavor == CIL_CONDBLOCK) {
@@ -2324,6 +2333,11 @@ int cil_booleanif_to_policydb(policydb_t *pdb, const struct cil_db *db, struct c
 	return SEPOL_OK;
 
 exit:
+	if (tmp_cond) {
+		if (tmp_cond->expr)
+			cond_expr_destroy(tmp_cond->expr);
+		free(tmp_cond);
+	}
 	return rc;
 }
 
@@ -3271,6 +3285,9 @@ int cil_portcon_to_policydb(policydb_t *pdb, struct cil_sort *portcons)
 			break;
 		case CIL_PROTOCOL_DCCP:
 			new_ocon->u.port.protocol = IPPROTO_DCCP;
+			break;
+		case CIL_PROTOCOL_SCTP:
+			new_ocon->u.port.protocol = IPPROTO_SCTP;
 			break;
 		default:
 			/* should not get here */
@@ -4702,9 +4719,11 @@ static int cil_check_neverallow(const struct cil_db *db, policydb_t *pdb, struct
 
 		rc = check_assertion(pdb, rule);
 		if (rc == CIL_TRUE) {
+// [ SEC_SELINUX_PORTING_COMMON
 			// Fixed build error when including neverallow
 			//*violation = CIL_TRUE;
 			*violation = CIL_FALSE;
+// ] SEC_SELINUX_PORTING_COMMON
 			rc = __cil_print_neverallow_failure(db, node);
 			if (rc != SEPOL_OK) {
 				goto exit;
@@ -4726,8 +4745,10 @@ static int cil_check_neverallow(const struct cil_db *db, policydb_t *pdb, struct
 			rule->xperms = item->data;
 			rc = check_assertion(pdb, rule);
 			if (rc == CIL_TRUE) {
+// [ SEC_SELINUX_PORTING_COMMON
 				// Fixed build error when including neverallow
 				//*violation = CIL_TRUE;
+// ] SEC_SELINUX_PORTING_COMMON
 				rc = __cil_print_neverallow_failure(db, node);
 				if (rc != SEPOL_OK) {
 					goto exit;
@@ -4794,6 +4815,7 @@ static struct cil_list *cil_classperms_from_sepol(policydb_t *pdb, uint16_t clas
 	return cp_list;
 
 exit:
+	cil_destroy_classperms(cp);
 	cil_log(CIL_ERR,"Failed to create CIL class-permissions from sepol values\n");
 	return NULL;
 }
@@ -5031,9 +5053,11 @@ int cil_binary_create_allocated_pdb(const struct cil_db *db, sepol_policydb_t *p
 	if (db->disable_neverallow != CIL_TRUE) {
 		int violation = CIL_FALSE;
 		cil_log(CIL_INFO, "Checking Neverallows\n");
+// [ SEC_SELINUX_PORTING_COMMON
 		// Fixed build error when including neverallow
 		cil_check_neverallows(db, pdb, neverallows, &violation);
 		//if (rc != SEPOL_OK) goto exit;
+// ] SEC_SELINUX_PORTING_COMMON
 
 		cil_log(CIL_INFO, "Checking User Bounds\n");
 		rc = bounds_check_users(NULL, pdb);

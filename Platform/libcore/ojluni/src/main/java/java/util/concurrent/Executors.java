@@ -46,7 +46,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import sun.security.util.SecurityConstants;
-import java.util.logging.Logger;
 
 // BEGIN android-note
 // removed security manager docs
@@ -342,6 +341,7 @@ public class Executors {
         return new DelegatedScheduledExecutorService(executor);
     }
 
+    // Android-changed: Removed references to SecurityManager from javadoc.
     /**
      * Returns a default thread factory used to create new threads.
      * This factory creates all new threads used by an Executor in the
@@ -359,6 +359,7 @@ public class Executors {
         return new DefaultThreadFactory();
     }
 
+    // Android-changed: Dropped documentation for legacy security code.
     /**
      * Legacy security code; do not use.
      */
@@ -425,6 +426,7 @@ public class Executors {
             public Object call() throws Exception { return action.run(); }};
     }
 
+    // Android-changed: Dropped documentation for legacy security code.
     /**
      * Legacy security code; do not use.
      */
@@ -434,6 +436,7 @@ public class Executors {
         return new PrivilegedCallable<T>(callable);
     }
 
+    // Android-changed: Dropped documentation for legacy security code.
     /**
      * Legacy security code; do not use.
      */
@@ -498,19 +501,20 @@ public class Executors {
         final ClassLoader ccl;
 
         PrivilegedCallableUsingCurrentClassLoader(Callable<T> task) {
-            // BEGIN Android-removed
-            // SecurityManager sm = System.getSecurityManager();
-            // if (sm != null) {
-            //     // Calls to getContextClassLoader from this class
-            //     // never trigger a security check, but we check
-            //     // whether our callers have this permission anyways.
-            //     sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
+            // Android-removed: System.getSecurityManager always returns null.
+            /*
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                // Calls to getContextClassLoader from this class
+                // never trigger a security check, but we check
+                // whether our callers have this permission anyways.
+                sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
 
-            //     // Whether setContextClassLoader turns out to be necessary
-            //     // or not, we fail fast if permission is not available.
-            //     sm.checkPermission(new RuntimePermission("setContextClassLoader"));
-            // }
-            // END Android-removed
+                // Whether setContextClassLoader turns out to be necessary
+                // or not, we fail fast if permission is not available.
+                sm.checkPermission(new RuntimePermission("setContextClassLoader"));
+            }
+            */
             this.task = task;
             this.acc = AccessController.getContext();
             this.ccl = Thread.currentThread().getContextClassLoader();
@@ -549,7 +553,6 @@ public class Executors {
         private final ThreadGroup group;
         private final AtomicInteger threadNumber = new AtomicInteger(1);
         private final String namePrefix;
-        private static final Logger logger = Logger.getLogger(DefaultThreadFactory.class.getName());
 
         DefaultThreadFactory() {
             SecurityManager s = System.getSecurityManager();
@@ -564,11 +567,6 @@ public class Executors {
             Thread t = new Thread(group, r,
                                   namePrefix + threadNumber.getAndIncrement(),
                                   0);
-            if (poolNumber.get() >= 6000) {
-                logger.severe("===== Detect pool-thread leak =====");
-                for(StackTraceElement list : Thread.currentThread().getStackTrace())
-                    logger.severe(list + "");
-            }
             if (t.isDaemon())
                 t.setDaemon(false);
             if (t.getPriority() != Thread.NORM_PRIORITY)
@@ -586,18 +584,19 @@ public class Executors {
 
         PrivilegedThreadFactory() {
             super();
-            // BEGIN Android-removed
-            // SecurityManager sm = System.getSecurityManager();
-            // if (sm != null) {
-            //     // Calls to getContextClassLoader from this class
-            //     // never trigger a security check, but we check
-            //     // whether our callers have this permission anyways.
-            //     sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
+            // Android-removed: System.getSecurityManager always returns null.
+            /*
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                // Calls to getContextClassLoader from this class
+                // never trigger a security check, but we check
+                // whether our callers have this permission anyways.
+                sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
 
-            //     // Fail fast
-            //     sm.checkPermission(new RuntimePermission("setContextClassLoader"));
-            // }
-            // END Android-removed
+                // Fail fast
+                sm.checkPermission(new RuntimePermission("setContextClassLoader"));
+            }
+            */
             this.acc = AccessController.getContext();
             this.ccl = Thread.currentThread().getContextClassLoader();
         }

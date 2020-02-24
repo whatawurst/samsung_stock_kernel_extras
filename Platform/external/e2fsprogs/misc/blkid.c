@@ -74,55 +74,56 @@ typedef unsigned int u4;
 typedef unsigned long long u8;
 
 static u1 checkUtfBytes(const char* bytes, int len, const char** errorKind) {
-    while ((*bytes != '\0')||(len>0)) {
-        u1 utf8 = *(bytes++);
-        // Switch on the high four bits.
-        switch (utf8 >> 4) {
-            case 0x00:
-            case 0x01:
-            case 0x02:
-            case 0x03:
-            case 0x04:
-            case 0x05:
-            case 0x06:
-            case 0x07:
-                // Bit pattern 0xxx. No need for any extra bytes.
-                break;
-            case 0x08:
-            case 0x09:
-            case 0x0a:
-            case 0x0b:
-            case 0x0f:
-                /*
-                 * Bit pattern 10xx or 1111, which are illegal start bytes.
-                 * Note: 1111 is valid for normal UTF-8, but not the
-                 * modified UTF-8 used here.
-                 */
-                *errorKind = "start";
-                return utf8;
-            case 0x0e:
-                // Bit pattern 1110, so there are two additional bytes.
-                utf8 = *(bytes++);
-                if ((utf8 & 0xc0) != 0x80) {
-                    *errorKind = "continuation";
-                    return utf8;
-                }
-                // Fall through to take care of the final byte.
-            case 0x0c:
-            case 0x0d:
-                // Bit pattern 110x, so there is one additional byte.
-                utf8 = *(bytes++);
-                if ((utf8 & 0xc0) != 0x80) {
-                    *errorKind = "continuation";
-                    return utf8;
-                }
-                break;
-        }
-        len--;
-    }
-    return 0;
+	while ((*bytes != '\0')||(len>0)) {
+		u1 utf8 = *(bytes++);
+		// Switch on the high four bits.
+		switch (utf8 >> 4) {
+			case 0x00:
+			case 0x01:
+			case 0x02:
+			case 0x03:
+			case 0x04:
+			case 0x05:
+			case 0x06:
+			case 0x07:
+				// Bit pattern 0xxx. No need for any extra bytes.
+				break;
+			case 0x08:
+			case 0x09:
+			case 0x0a:
+			case 0x0b:
+			case 0x0f:
+				/*
+				 * Bit pattern 10xx or 1111, which are illegal start bytes.
+				 * Note: 1111 is valid for normal UTF-8, but not the
+				 * modified UTF-8 used here.
+				 */
+				*errorKind = "start";
+				return utf8;
+			case 0x0e:
+				// Bit pattern 1110, so there are two additional bytes.
+				utf8 = *(bytes++);
+				if ((utf8 & 0xc0) != 0x80) {
+					*errorKind = "continuation";
+					return utf8;
+				}
+				// Fall through to take care of the final byte.
+			case 0x0c:
+			case 0x0d:
+				// Bit pattern 110x, so there is one additional byte.
+				utf8 = *(bytes++);
+				if ((utf8 & 0xc0) != 0x80) {
+					*errorKind = "continuation";
+					return utf8;
+				}
+				break;
+		}
+		len--;
+	}
+	return 0;
 }
 //]
+
 /*
  * This function does "safe" printing.  It will convert non-printable
  * ASCII characters using '^' and M- notation.
@@ -130,17 +131,19 @@ static u1 checkUtfBytes(const char* bytes, int len, const char** errorKind) {
 static void safe_print(const char *cp, int len)
 {
 	unsigned char	ch;
-//@VOLD[    
-    const char* errorKind = NULL;
-    checkUtfBytes(cp,len, &errorKind);
-    //Android do not accept non utf8 strings
-    //TODO: return just byte buffer and made a string on java level
-    if (errorKind != NULL) {
-        return;
-    }
-//]
+
 	if (len < 0)
 		len = strlen(cp);
+
+	//@VOLD[
+	const char* errorKind = NULL;
+	checkUtfBytes(cp,len, &errorKind);
+	//Android do not accept non utf8 strings
+	//TODO: return just byte buffer and made a string on java level
+	if (errorKind != NULL) {
+		return;
+	}
+	//]
 
 	while (len--) {
 		ch = *cp++;

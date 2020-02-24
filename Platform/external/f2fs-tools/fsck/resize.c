@@ -9,129 +9,6 @@
  */
 #include "fsck.h"
 
-static int get_new_sb(struct f2fs_super_block *sb)
-{
-	u_int32_t zone_size_bytes, zone_align_start_offset;
-	u_int32_t blocks_for_sit, blocks_for_nat, blocks_for_ssa;
-	u_int32_t sit_segments, diff, total_meta_segments;
-	u_int32_t total_valid_blks_available;
-	u_int32_t sit_bitmap_size, max_sit_bitmap_size;
-	u_int32_t max_nat_bitmap_size, max_nat_segments;
-	u_int32_t segment_size_bytes = 1 << (get_sb(log_blocksize) +
-					get_sb(log_blocks_per_seg));
-	u_int32_t blks_per_seg = 1 << get_sb(log_blocks_per_seg);
-	u_int32_t segs_per_zone = get_sb(segs_per_sec) * get_sb(secs_per_zone);
-
-	set_sb(block_count, c.target_sectors >>
-				get_sb(log_sectors_per_block));
-
-	zone_size_bytes = segment_size_bytes * segs_per_zone;
-	zone_align_start_offset =
-		(c.start_sector * c.sector_size +
-		2 * F2FS_BLKSIZE + zone_size_bytes - 1) /
-		zone_size_bytes * zone_size_bytes -
-		c.start_sector * c.sector_size;
-
-	set_sb(segment_count, (c.target_sectors * c.sector_size -
-				zone_align_start_offset) / segment_size_bytes /
-				c.segs_per_sec * c.segs_per_sec);
-
-	blocks_for_sit = SIZE_ALIGN(get_sb(segment_count), SIT_ENTRY_PER_BLOCK);
-	sit_segments = SEG_ALIGN(blocks_for_sit);
-	set_sb(segment_count_sit, sit_segments * 2);
-	set_sb(nat_blkaddr, get_sb(sit_blkaddr) +
-				get_sb(segment_count_sit) * blks_per_seg);
-
-	total_valid_blks_available = (get_sb(segment_count) -
-			(get_sb(segment_count_ckpt) +
-			get_sb(segment_count_sit))) * blks_per_seg;
-	blocks_for_nat = SIZE_ALIGN(total_valid_blks_available,
-					NAT_ENTRY_PER_BLOCK);
-	set_sb(segment_count_nat, SEG_ALIGN(blocks_for_nat));
-
-	sit_bitmap_size = ((get_sb(segment_count_sit) / 2) <<
-				get_sb(log_blocks_per_seg)) / 8;
-	if (sit_bitmap_size > MAX_SIT_BITMAP_SIZE)
-		max_sit_bitmap_size = MAX_SIT_BITMAP_SIZE;
-	else
-		max_sit_bitmap_size = sit_bitmap_size;
-
-	/*
-	 * It should be reserved minimum 1 segment for nat.
-	 * When sit is too large, we should expand cp area. It requires more pages for cp.
-	 */
-	if (max_sit_bitmap_size > MAX_SIT_BITMAP_SIZE_IN_CKPT) {
-		max_nat_bitmap_size = CHECKSUM_OFFSET - sizeof(struct f2fs_checkpoint) + 1;
-		set_sb(cp_payload, F2FS_BLK_ALIGN(max_sit_bitmap_size));
-	} else {
-		max_nat_bitmap_size = CHECKSUM_OFFSET - sizeof(struct f2fs_checkpoint) + 1
-			- max_sit_bitmap_size;
-		set_sb(cp_payload, 0);
-	}
-
-	max_nat_segments = (max_nat_bitmap_size * 8) >>
-					get_sb(log_blocks_per_seg);
-
-	if (get_sb(segment_count_nat) > max_nat_segments)
-		set_sb(segment_count_nat, max_nat_segments);
-
-	set_sb(segment_count_nat, get_sb(segment_count_nat) * 2);
-
-	set_sb(ssa_blkaddr, get_sb(nat_blkaddr) +
-				get_sb(segment_count_nat) * blks_per_seg);
-
-	total_valid_blks_available = (get_sb(segment_count) -
-			(get_sb(segment_count_ckpt) +
-			get_sb(segment_count_sit) +
-			get_sb(segment_count_nat))) * blks_per_seg;
-
-	blocks_for_ssa = total_valid_blks_available / blks_per_seg + 1;
-
-	set_sb(segment_count_ssa, SEG_ALIGN(blocks_for_ssa));
-
-	total_meta_segments = get_sb(segment_count_ckpt) +
-		get_sb(segment_count_sit) +
-		get_sb(segment_count_nat) +
-		get_sb(segment_count_ssa);
-
-	diff = total_meta_segments % segs_per_zone;
-	if (diff)
-		set_sb(segment_count_ssa, get_sb(segment_count_ssa) +
-			(segs_per_zone - diff));
-
-	set_sb(main_blkaddr, get_sb(ssa_blkaddr) + get_sb(segment_count_ssa) *
-			 blks_per_seg);
-
-	set_sb(segment_count_main, get_sb(segment_count) -
-			(get_sb(segment_count_ckpt) +
-			 get_sb(segment_count_sit) +
-			 get_sb(segment_count_nat) +
-			 get_sb(segment_count_ssa)));
-
-	set_sb(section_count, get_sb(segment_count_main) /
-						get_sb(segs_per_sec));
-
-	set_sb(segment_count_main, get_sb(section_count) *
-						get_sb(segs_per_sec));
-
-	/* Let's determine the best reserved and overprovisioned space */
-	c.new_overprovision = get_best_overprovision(sb);
-	c.new_reserved_segments =
-		(2 * (100 / c.new_overprovision + 1) + 6) *
-						get_sb(segs_per_sec);
-
-	if ((get_sb(segment_count_main) - 2) < c.new_reserved_segments ||
-		get_sb(segment_count_main) * blks_per_seg >
-						get_sb(block_count)) {
-		MSG(0, "\tError: Device size is not sufficient for F2FS volume, "
-			"more segment needed =%u",
-			c.new_reserved_segments -
-			(get_sb(segment_count_main) - 2));
-		return -1;
-	}
-	return 0;
-}
-
 static void migrate_main(struct f2fs_sb_info *sbi, unsigned int offset)
 {
 	void *raw = calloc(BLOCK_SZ, 1);
@@ -197,6 +74,217 @@ static void move_ssa(struct f2fs_sb_info *sbi, unsigned int segno,
 		free(sum_blk);
 	}
 	DBG(1, "Info: Done to migrate SSA blocks\n");
+}
+
+static int backup_meta(struct f2fs_sb_info *sbi, u64 new_end_blkaddr)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	unsigned int segment0_blkaddr = get_sb(segment0_blkaddr);
+	unsigned int target_seg = SEG_ALIGN(get_sb(main_blkaddr) - segment0_blkaddr);
+	u64 end_blkaddr = get_sb(block_count);
+	int blocks_per_seg = 1 << get_sb(log_blocks_per_seg);
+	int seg_size = F2FS_BLKSIZE * blocks_per_seg;
+	void *buf;
+	int i, ret = 0;
+
+	if (get_sb(resize_state) == F2FS_META_BACKUP)
+		return ret;
+	if ((end_blkaddr + target_seg * blocks_per_seg) > new_end_blkaddr) {
+		MSG(0, "\tError: Not enough space for backup metadata\n");
+		ret = -1;
+		return ret;
+	}
+
+	buf = calloc(BLOCK_SZ, blocks_per_seg);
+	ASSERT(buf);
+
+	/* Backup CP, SIT, NAT, SSA */
+	for (i = 0; i < target_seg; i++) {
+		ret = dev_read(buf, (segment0_blkaddr * F2FS_BLKSIZE) + (i * seg_size), seg_size);
+		ASSERT(ret >= 0);
+		ret = dev_write(buf, ((end_blkaddr + 2) * F2FS_BLKSIZE) + (i * seg_size), seg_size);
+		ASSERT(ret >= 0);
+	}
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	set_sb(backupmeta_blkaddr, end_blkaddr);
+	set_sb(segment_count_backupmeta, target_seg);
+	set_sb(resize_state, F2FS_META_BACKUP);
+
+	/* Backup SB */
+	for (i = 0; i < 2; i++) {
+		ret = dev_read_block(buf, i);
+		ASSERT(ret >= 0);
+		memcpy(buf + F2FS_SUPER_OFFSET, sb, sizeof(*sb));
+		ret = dev_write_block(buf, end_blkaddr + i);
+		ASSERT(ret >= 0);
+	}
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	for (i = 0; i < 2; i++) {
+		ret = dev_read_block(buf, i);
+		ASSERT(ret >= 0);
+		memcpy(buf + F2FS_SUPER_OFFSET, sb, sizeof(*sb));
+		ret = dev_write_block(buf, i);
+		ASSERT(ret >= 0);
+	}
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	free(buf);
+	return ret;
+}
+
+static void clear_backup_meta(struct f2fs_sb_info *sbi, struct f2fs_super_block *new_sb)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	unsigned int target_seg = SEG_ALIGN(get_sb(main_blkaddr) - get_sb(segment0_blkaddr));
+	u64 end_blkaddr = get_sb(block_count);
+	int blocks_per_seg = 1 << get_sb(log_blocks_per_seg);
+	int seg_size = F2FS_BLKSIZE * blocks_per_seg;
+	void *buf;
+	int i, ret;
+
+	buf = calloc(BLOCK_SZ, blocks_per_seg);
+	ASSERT(buf);
+
+	set_newsb(backupmeta_blkaddr, 0);
+	set_newsb(segment_count_backupmeta, 0);
+	set_newsb(resize_state, 0);
+
+	for (i = 0; i < 2; i++) {
+		ret = dev_read_block(buf, i);
+		ASSERT(ret >= 0);
+		memcpy(buf + F2FS_SUPER_OFFSET, new_sb, sizeof(*new_sb));
+		ret = dev_write_block(buf, i);
+		ASSERT(ret >= 0);
+	}
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	memset(buf, 0, BLOCK_SZ);
+	for (i = 0; i < 2; i++) {
+		ret = dev_write_block(buf, end_blkaddr + i);
+		ASSERT(ret >= 0);
+	}
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	for (i = 0; i < target_seg; i++) {
+		ret = dev_write(buf, ((end_blkaddr + 2) * F2FS_BLKSIZE) + (i * seg_size), seg_size);
+		ASSERT(ret >= 0);
+	}
+
+	ret = f2fs_fsync_device();
+	ASSERT(ret >= 0);
+
+	free(buf);
+}
+
+void clear_garbage_meta(struct f2fs_sb_info *sbi, struct f2fs_super_block *new_sb)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	unsigned int new_main_blkaddr = get_newsb(main_blkaddr);
+	void *zero_block;
+	block_t blkaddr = get_sb(main_blkaddr);
+	int ret;
+
+	DBG(1, "Info: Found backup metadata. Clear previous garbage meta\n");
+
+	zero_block = calloc(BLOCK_SZ, 1);
+	ASSERT(zero_block);
+
+	while (blkaddr < new_main_blkaddr) {
+		ret = dev_write_block(zero_block, blkaddr++);
+		ASSERT(ret >= 0);
+	}
+
+	free(zero_block);
+}
+
+int check_fail_safe_resize(struct f2fs_sb_info *sbi, struct f2fs_super_block *new_sb)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	struct sit_info *sit_i = SIT_I(sbi);
+	unsigned int target_segno = SEG_ALIGN(get_newsb(main_blkaddr) -
+							get_sb(main_blkaddr));
+	int i;
+
+	for (i = 0; i < target_segno; i++) {
+		struct seg_entry *se = &sit_i->sentries[i];
+		if (se->valid_blocks)
+			return -1;
+	}
+
+	DBG(1, "Info: pass to checking safe resize\n");
+	return 0;
+}
+
+static void migrate_ssa_safe(struct f2fs_sb_info *sbi,
+		struct f2fs_super_block *new_sb, unsigned int offset)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	struct f2fs_checkpoint *cp = F2FS_CKPT(sbi);
+	block_t old_sum_blkaddr = get_sb(ssa_blkaddr);
+	block_t old_offset_blkaddr = old_sum_blkaddr + offset;
+	block_t new_sum_blkaddr = get_newsb(ssa_blkaddr);
+	block_t end_sum_blkaddr = get_newsb(main_blkaddr);
+	block_t expand_sum_blkaddr = new_sum_blkaddr +
+					TOTAL_SEGS(sbi) - offset;
+	block_t blkaddr;
+	unsigned int blocks_per_seg = 1 << get_sb(log_blocks_per_seg);
+	unsigned int seg_size = (1 << get_sb(log_blocksize)) * blocks_per_seg;
+	int seg, target_segs;
+	int ret, type, blk;
+	void *ssa = calloc(F2FS_BLKSIZE, 1 << get_sb(log_blocks_per_seg));
+	void *zero_block = calloc(BLOCK_SZ, 1);
+	ASSERT(ssa);
+	ASSERT(zero_block);
+
+	ASSERT(offset);
+
+	for (type = 0; type < NR_CURSEG_NODE_TYPE; type++) {
+		struct curseg_info *curseg;
+		int segno;
+		segno = get_cp(cur_node_segno[type]);
+		curseg = CURSEG_I(sbi, CURSEG_HOT_NODE + type);
+		ret = dev_write_block(curseg->sum_blk, GET_SUM_BLKADDR(sbi, segno));
+		ASSERT(ret >= 0);
+	}
+	for (type = 0; type < NR_CURSEG_DATA_TYPE; type++) {
+		struct curseg_info *curseg;
+		int segno;
+		segno = get_cp(cur_data_segno[type]);
+		curseg = CURSEG_I(sbi, type);
+		ret = dev_write_block(curseg->sum_blk, GET_SUM_BLKADDR(sbi, segno));
+		ASSERT(ret >= 0);
+	}
+
+	target_segs = SEG_ALIGN(end_sum_blkaddr - new_sum_blkaddr);
+	old_offset_blkaddr = old_sum_blkaddr + offset;
+	for (seg = target_segs - 1; seg >= 0; seg--) {
+		if (new_sum_blkaddr + seg * blocks_per_seg < expand_sum_blkaddr) {
+			ret = dev_read(ssa, (old_offset_blkaddr + seg * blocks_per_seg) * F2FS_BLKSIZE, seg_size);
+			ASSERT(ret >= 0);
+		}
+		for (blk = blocks_per_seg - 1; blk >= 0; blk--) {
+			blkaddr = new_sum_blkaddr + seg * blocks_per_seg + blk;
+			if (blkaddr < expand_sum_blkaddr) {
+				ret = dev_write_block((char *)ssa + blk * F2FS_BLKSIZE, blkaddr);
+				ASSERT(ret >= 0);
+			} else {
+				ret = dev_write_block(zero_block, blkaddr);
+				ASSERT(ret >= 0);
+			}
+		}
+	}
+
+	DBG(0, "Info: Done to migrate SSA blocks: sum_blkaddr = 0x%x -> 0x%x\n",
+				old_sum_blkaddr, new_sum_blkaddr);
+	free(ssa);
+	free(zero_block);
 }
 
 static void migrate_ssa(struct f2fs_sb_info *sbi,
@@ -313,8 +401,11 @@ static void migrate_nat(struct f2fs_sb_info *sbi,
 				(seg_off << sbi->log_blocks_per_seg << 1) +
 				(block_off & ((1 << sbi->log_blocks_per_seg) - 1)));
 
-		if (f2fs_test_bit(block_off, nm_i->nat_bitmap))
+		/* move to set #0 */
+		if (f2fs_test_bit(block_off, nm_i->nat_bitmap)) {
 			block_addr += sbi->blocks_per_seg;
+			f2fs_clear_bit(block_off, nm_i->nat_bitmap);
+		}
 
 		ret = dev_read_block(nat_block, block_addr);
 		ASSERT(ret >= 0);
@@ -479,14 +570,16 @@ static void rebuild_checkpoint(struct f2fs_sb_info *sbi,
 
 	/* update nat_bits flag */
 	flags = update_nat_bits_flags(new_sb, cp, get_cp(ckpt_flags));
+	if (flags & CP_COMPACT_SUM_FLAG)
+		flags &= ~CP_COMPACT_SUM_FLAG;
 	set_cp(ckpt_flags, flags);
 
 	memcpy(new_cp, cp, (unsigned char *)cp->sit_nat_version_bitmap -
 						(unsigned char *)cp);
 	new_cp->checkpoint_ver = cpu_to_le64(cp_ver + 1);
 
-	crc = f2fs_cal_crc32(F2FS_SUPER_MAGIC, new_cp, CHECKSUM_OFFSET);
-	*((__le32 *)((unsigned char *)new_cp + CHECKSUM_OFFSET)) =
+	crc = f2fs_cal_crc32(F2FS_SUPER_MAGIC, new_cp, CP_CHKSUM_OFFSET);
+	*((__le32 *)((unsigned char *)new_cp + CP_CHKSUM_OFFSET)) =
 							cpu_to_le32(crc);
 
 	/* Write a new checkpoint in the other set */
@@ -536,29 +629,14 @@ static void rebuild_checkpoint(struct f2fs_sb_info *sbi,
 	memset(buf, 0, BLOCK_SZ);
 	ret = dev_write_block(buf, old_cp_blk_no);
 	ASSERT(ret >= 0);
+	f2fs_fsync_device();
 
 	free(buf);
 	free(new_cp);
 	DBG(0, "Info: Done to rebuild checkpoint blocks\n");
 }
 
-static void rebuild_superblock(struct f2fs_super_block *new_sb)
-{
-	int index, ret;
-	u_int8_t *buf;
-
-	buf = calloc(BLOCK_SZ, 1);
-
-	memcpy(buf + F2FS_SUPER_OFFSET, new_sb, sizeof(*new_sb));
-	for (index = 0; index < 2; index++) {
-		ret = dev_write_block(buf, index);
-		ASSERT(ret >= 0);
-	}
-	free(buf);
-	DBG(0, "Info: Done to rebuild superblock\n");
-}
-
-int f2fs_resize(struct f2fs_sb_info *sbi)
+static int f2fs_resize_grow(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
 	struct f2fs_super_block new_sb_raw;
@@ -584,8 +662,15 @@ int f2fs_resize(struct f2fs_sb_info *sbi)
 		}
 	}
 
-	print_raw_sb_info(sb);
-	print_raw_sb_info(new_sb);
+	/* check fail-safe resize availability */
+	if (c.fail_safe_resize) {
+		if (get_sb(resize_state) & F2FS_META_BACKUP) {
+			clear_garbage_meta(sbi, new_sb);
+		} else if (check_fail_safe_resize(sbi, new_sb)) {
+			MSG(0, "Info: Failed to run on fail-safe mode resize. Try to do normal mode\n");
+			c.fail_safe_resize = 0;
+		}
+	}
 
 	old_main_blkaddr = get_sb(main_blkaddr);
 	new_main_blkaddr = get_newsb(main_blkaddr);
@@ -605,10 +690,105 @@ int f2fs_resize(struct f2fs_sb_info *sbi)
 	if (err)
 		migrate_main(sbi, offset);
 
-	migrate_ssa(sbi, new_sb, offset_seg);
+	if (c.fail_safe_resize && backup_meta(sbi, get_newsb(block_count)) < 0) {
+		MSG(0, "Info: Try to do normal mode\n");
+		c.fail_safe_resize = 0;
+	}
+	if (!c.fail_safe_resize)
+		migrate_ssa(sbi, new_sb, offset_seg);
+	else
+		migrate_ssa_safe(sbi, new_sb, offset_seg);
 	migrate_nat(sbi, new_sb);
 	migrate_sit(sbi, new_sb, offset_seg);
 	rebuild_checkpoint(sbi, new_sb, offset_seg);
-	rebuild_superblock(new_sb);
+	update_superblock(new_sb, SB_MASK_ALL);
+	if (c.fail_safe_resize)
+		clear_backup_meta(sbi, new_sb);
+	print_raw_sb_info(sb);
+	print_raw_sb_info(new_sb);
+
 	return 0;
+}
+
+static int f2fs_resize_shrink(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	struct f2fs_super_block new_sb_raw;
+	struct f2fs_super_block *new_sb = &new_sb_raw;
+	block_t old_end_blkaddr, old_main_blkaddr;
+	block_t new_end_blkaddr, new_main_blkaddr, tmp_end_blkaddr;
+	unsigned int offset;
+	int err = -1;
+
+	/* flush NAT/SIT journal entries */
+	flush_journal_entries(sbi);
+
+	memcpy(new_sb, F2FS_RAW_SUPER(sbi), sizeof(*new_sb));
+	if (get_new_sb(new_sb))
+		return -1;
+
+	/* check nat availability */
+	if (get_sb(segment_count_nat) > get_newsb(segment_count_nat)) {
+		err = shrink_nats(sbi, new_sb);
+		if (err) {
+			MSG(0, "\tError: Failed to shrink NATs\n");
+			return err;
+		}
+	}
+
+	old_main_blkaddr = get_sb(main_blkaddr);
+	new_main_blkaddr = get_newsb(main_blkaddr);
+	offset = old_main_blkaddr - new_main_blkaddr;
+	old_end_blkaddr = (get_sb(segment_count_main) <<
+			get_sb(log_blocks_per_seg)) + get_sb(main_blkaddr);
+	new_end_blkaddr = (get_newsb(segment_count_main) <<
+			get_newsb(log_blocks_per_seg)) + get_newsb(main_blkaddr);
+
+	tmp_end_blkaddr = new_end_blkaddr + offset;
+	err = f2fs_defragment(sbi, tmp_end_blkaddr,
+				old_end_blkaddr - tmp_end_blkaddr,
+				tmp_end_blkaddr, 1);
+	MSG(0, "Try to do defragement: %s\n", err ? "Insufficient Space": "Done");
+
+	if (err) {
+		return -ENOSPC;
+	}
+
+	update_superblock(new_sb, SB_MASK_ALL);
+	rebuild_checkpoint(sbi, new_sb, 0);
+	/*if (!c.safe_resize) {
+		migrate_sit(sbi, new_sb, offset_seg);
+		migrate_nat(sbi, new_sb);
+		migrate_ssa(sbi, new_sb, offset_seg);
+	}*/
+
+	/* move whole data region */
+	//if (err)
+	//	migrate_main(sbi, offset);
+	print_raw_sb_info(sb);
+	print_raw_sb_info(new_sb);
+
+	return 0;
+}
+
+int f2fs_resize(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+
+	/* may different sector size */
+	if ((c.target_sectors * c.sector_size >>
+			get_sb(log_blocksize)) < get_sb(block_count))
+		if (!c.safe_resize) {
+			ASSERT_MSG("Nothing to resize, now only supports resizing with safe resize flag\n");
+			return -1;
+		} else {
+			return f2fs_resize_shrink(sbi);
+		}
+	else if ((c.target_sectors * c.sector_size >>
+			get_sb(log_blocksize)) > get_sb(block_count))
+		return f2fs_resize_grow(sbi);
+	else {
+		MSG(0, "Nothing to resize.\n");
+		return 0;
+	}
 }

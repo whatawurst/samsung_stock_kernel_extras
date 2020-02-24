@@ -47,7 +47,8 @@ static char *device_name, *io_options;
 static void usage (char *prog)
 {
 	fprintf (stderr, _("Usage: %s [-d debug_flags] [-f] [-F] [-M] [-P] "
-			   "[-p] [-R reserved_bytes] device [-b|-s|new_size] [-z undo_file]\n\n"),
+			   "[-p] [-R reserved_bytes] device [-b|-s|new_size] [-S RAID-stride] "
+			   "[-z undo_file]\n\n"),
 		 prog);
 
 	exit (1);
@@ -431,7 +432,7 @@ int main (int argc, char ** argv)
 	 * unless the user is forcing it.
 	 *
 	 * We do ERROR and VALID checks even if we're only printing the
-	 * minimimum size, because traversal of a badly damaged filesystem
+	 * minimum size, because traversal of a badly damaged filesystem
 	 * can cause issues as well.  We don't require it to be fscked after
 	 * the last mount time in this case, though, as this is a bit less
 	 * risky.
@@ -443,6 +444,11 @@ int main (int argc, char ** argv)
 			checkit = 1;
 
 		if ((fs->super->s_state & EXT2_VALID_FS) == 0)
+			checkit = 1;
+
+		if ((ext2fs_free_blocks_count(fs->super) >
+		     ext2fs_blocks_count(fs->super)) ||
+		    (fs->super->s_free_inodes_count > fs->super->s_inodes_count))
 			checkit = 1;
 
 		if (checkit) {
@@ -510,7 +516,7 @@ int main (int argc, char ** argv)
 		new_size = max_size;
 		/* Round down to an even multiple of a pagesize */
 		if (sys_page_size > blocksize)
-			new_size &= ~((sys_page_size / blocksize)-1);
+			new_size &= ~((blk64_t)((sys_page_size / blocksize)-1));
 	}
 	/* If changing 64bit, don't change the filesystem size. */
 	if (flags & (RESIZE_DISABLE_64BIT | RESIZE_ENABLE_64BIT)) {
@@ -561,7 +567,7 @@ int main (int argc, char ** argv)
 
 	/* resize2fs do not run to make requested size */
 	/* similar with orignal size( <=128MB ) */
-	if(llabs((__s64)(new_size - ext2fs_blocks_count(fs->super))) <=
+	if(abs((int)(new_size - ext2fs_blocks_count(fs->super))) <=
 				128 * 1024 * 1024 / fs->blocksize ) {
 		fprintf(stderr, _("The filesystem is not need to resize."
 			"It is very close to size to resize\n"));

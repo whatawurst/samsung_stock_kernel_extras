@@ -21,6 +21,10 @@
 #include <sys/xattr.h>
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct f2fs_xattr_header {
 	__le32 h_magic;		/* magic number for identification */
 	__le32 h_refcount;	/* reference count */
@@ -79,6 +83,9 @@ static inline int f2fs_acl_count(int size)
 	}
 }
 
+int f2fs_setxattr(struct f2fs_sb_info *sbi, nid_t ino, int index, const char *name,
+		const void *value, size_t size, int flags);
+
 #ifndef XATTR_USER_PREFIX
 #define XATTR_USER_PREFIX	"user."
 #endif
@@ -134,4 +141,13 @@ static inline int f2fs_acl_count(int size)
 		sizeof(struct f2fs_xattr_header) -		\
 		sizeof(struct f2fs_xattr_entry))
 
+#define MAX_INLINE_XATTR_SIZE						\
+			(DEF_ADDRS_PER_INODE -				\
+			F2FS_TOTAL_EXTRA_ATTR_SIZE / sizeof(__le32) -	\
+			DEF_INLINE_RESERVED_SIZE -			\
+			MIN_INLINE_DENTRY_SIZE / sizeof(__le32))
+
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -19,6 +19,8 @@
 #include <mntent.h>
 #endif
 
+#include "xattr_table.h"
+
 #ifdef HAVE_LIBSELINUX
 static struct selabel_handle *sehnd = NULL;
 #endif
@@ -69,6 +71,8 @@ static int set_selinux_xattr(struct f2fs_sb_info *sbi, const char *path,
 	if (asprintf(&mnt_path, "%s%s", c.mount_point, path) <= 0) {
 		ERR_MSG("cannot allocate security path for %s%s\n",
 						c.mount_point, path);
+		if (mnt_path)
+			free(mnt_path);
 		return -ENOMEM;
 	}
 
@@ -101,6 +105,8 @@ static int set_perms_and_caps(struct dentry *de)
 	if (asprintf(&mnt_path, "%s%s", c.mount_point, de->path) <= 0) {
 		ERR_MSG("cannot allocate mount path for %s%s\n",
 				c.mount_point, de->path);
+		if (mnt_path)
+			free(mnt_path);
 		return -ENOMEM;
 	}
 
@@ -174,6 +180,7 @@ static int build_directory(struct f2fs_sb_info *sbi, const char *full_path,
 	struct dentry *dentries;
 	struct dirent **namelist = NULL;
 	int i, ret = 0;
+	char *mnt_path = NULL;
 
 	entries = scandir(full_path, &namelist, filter_dot, (void *)alphasort);
 	if (entries < 0) {
@@ -182,8 +189,12 @@ static int build_directory(struct f2fs_sb_info *sbi, const char *full_path,
 	}
 
 	dentries = calloc(entries, sizeof(struct dentry));
-	if (dentries == NULL)
+	if (dentries == NULL) {
+		for (i = 0; i < entries; i++)
+			free(namelist[i]);
+		free(namelist);
 		return -ENOMEM;
+	}
 
 	for (i = 0; i < entries; i++) {
 		dentries[i].name = (unsigned char *)strdup(namelist[i]->d_name);
@@ -239,8 +250,17 @@ static int build_directory(struct f2fs_sb_info *sbi, const char *full_path,
 
 		ret = set_selinux_xattr(sbi, dentries[i].path,
 					dentries[i].ino, dentries[i].mode);
-		if (ret)
-			return ret;
+		ASSERT(ret == 0);
+
+		if (asprintf(&mnt_path, "%s%s", c.mount_point, dentries[i].path) <= 0) {
+			ERR_MSG("cannot allocate xattr_table path for %s%s\n",
+							c.mount_point, dentries[i].path);
+			free(mnt_path);
+			return -ENOMEM;
+		}
+		ret = xattr_table_setup(c.xattr_table, mnt_path, dentries[i].ino, sbi);
+		free(mnt_path);
+		ASSERT(ret == 0);
 
 		free(dentries[i].path);
 		free(dentries[i].full_path);
@@ -293,11 +313,26 @@ skip:
 int f2fs_sload(struct f2fs_sb_info *sbi)
 {
 	int ret = 0;
+	char *mnt_path = NULL;
 
 	ret = configure_files();
 	if (ret) {
 		ERR_MSG("Failed to configure files\n");
 		return ret;
+	}
+
+	if (c.target_sectors) {
+		struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+		struct f2fs_super_block new_sb_raw;
+		struct f2fs_super_block *new_sb = &new_sb_raw;
+
+		memcpy(new_sb, sb, sizeof(*new_sb));
+		ret = get_new_sb(new_sb);
+		if (ret) {
+			ERR_MSG("Failed to get new sb\n");
+			return ret;
+		}
+		c.resv_main_blkaddr = get_newsb(main_blkaddr);
 	}
 
 	/* flush NAT/SIT journal entries */
@@ -317,14 +352,31 @@ int f2fs_sload(struct f2fs_sb_info *sbi)
 		return ret;
 	}
 
+	if (asprintf(&mnt_path, "%s%s", c.mount_point, c.mount_point) <= 0) {
+		ERR_MSG("cannot allocate xattr_table path for %s%s\n",
+						c.mount_point, c.mount_point);
+		if (mnt_path)
+			free(mnt_path);
+		return -ENOMEM;
+	}
+	ret = xattr_table_setup(c.xattr_table, mnt_path, F2FS_ROOT_INO(sbi), sbi);
+	free(mnt_path);
+	if (ret) {
+		ERR_MSG("Failed to set xattr_table for root: %d\n", ret);
+		return ret;
+	}
+
 	/* update curseg info; can update sit->types */
-	move_curseg_info(sbi, SM_I(sbi)->main_blkaddr);
+	if (c.resv_main_blkaddr)
+		move_curseg_info(sbi, c.resv_main_blkaddr, 0);
+	else
+		move_curseg_info(sbi, SM_I(sbi)->main_blkaddr, 0);
 	zero_journal_entries(sbi);
 	write_curseg_info(sbi);
 
 	/* flush dirty sit entries */
 	flush_sit_entries(sbi);
 
-	write_checkpoint(sbi);
+	__write_checkpoint(sbi);
 	return 0;
 }

@@ -41,6 +41,8 @@
 #include <sys/statfs.h>
 #include <sys/vfs.h>
 
+#include "../version.h"
+
 /* A relatively new ioctl interface ... */
 #ifndef EXT4_IOC_MOVE_EXT
 #define EXT4_IOC_MOVE_EXT      _IOWR('f', 15, struct move_extent)
@@ -112,7 +114,7 @@
 
 /* The following macros are error message */
 #define MSG_USAGE		\
-"Usage	: e4defrag [-v] [-l limit(k)] file...| directory...| device...\n\
+"Usage	: e4defrag [-v] file...| directory...| device...\n\
 	: e4defrag  -c  file...| directory...| device...\n"
 
 #define NGMSG_EXT4		"Filesystem is not ext4 filesystem"
@@ -179,8 +181,7 @@ static __u32 blocks_per_group;
 static __u32 feature_incompat;
 static ext4_fsblk_t	files_block_count;
 static struct frag_statistic_ino	frag_rank[SHOW_FRAG_FILES];
-static unsigned long	total_defrag_size;
-static unsigned long	defrag_limit;
+
 
 /*
  * We prefer posix_fadvise64 when available, as it allows 64bit offset on
@@ -1015,7 +1016,7 @@ static int get_best_count(ext4_fsblk_t block_count)
 	int ret;
 	unsigned int flex_bg_num;
 
-	/* Calcuate best extents count */
+	/* Calculate best extents count */
 	if (feature_incompat & EXT4_FEATURE_INCOMPAT_FLEX_BG) {
 		flex_bg_num = 1 << log_groups_per_flex;
 		ret = ((block_count - 1) /
@@ -1459,14 +1460,6 @@ static int file_defrag(const char *file, const struct stat64 *buf,
 		return 0;
 	}
 
-	if (total_defrag_size >= defrag_limit) {
-		if (mode_flag & DETAIL) {
-			PRINT_FILE_NAME(file);
-			STATISTIC_ERR_MSG("Defrag limit has been reached");
-		}
-		return 0;
-	}
-
 	fd = open64(file, O_RDWR);
 	if (fd < 0) {
 		if (mode_flag & DETAIL) {
@@ -1587,7 +1580,7 @@ static int file_defrag(const char *file, const struct stat64 *buf,
 		goto out;
 	}
 
-	/* Calcuate donor inode's continuous physical region */
+	/* Calculate donor inode's continuous physical region */
 	donor_physical_cnt = get_physical_count(donor_list_physical);
 
 	/* Change donor extent list from physical to logical */
@@ -1609,9 +1602,8 @@ check_improvement:
 		extents_before_defrag += file_frags_start;
 	}
 
-	/* It works only when fragmentation is improved by more than 25%. */
 	if (file_frags_start <= best ||
-			orig_physical_cnt < (donor_physical_cnt*4/3)) {
+			orig_physical_cnt <= donor_physical_cnt) {
 		printf("\033[79;0H\033[K[%u/%u]%s:\t%3d%%",
 			defraged_file_count, total_count, file, 100);
 		if (mode_flag & DETAIL)
@@ -1656,7 +1648,6 @@ check_improvement:
 	if (ret < 0)
 		goto out;
 
-	total_defrag_size += blk_count * block_size / 1024;
 	printf("\t[ OK ]\n");
 	fflush(stdout);
 	succeed_cnt++;
@@ -1684,32 +1675,26 @@ int main(int argc, char *argv[])
 	int	i, j, ret = 0;
 	int	flags = FTW_PHYS | FTW_MOUNT;
 	int	arg_type = -1;
+	int	mount_dir_len = 0;
 	int	success_flag = 0;
 	char	dir_name[PATH_MAX + 1];
 	char	dev_name[PATH_MAX + 1];
 	struct stat64	buf;
 	ext2_filsys fs = NULL;
 
+	printf("e4defrag %s (%s)\n", E2FSPROGS_VERSION, E2FSPROGS_DATE);
+
 	/* Parse arguments */
 	if (argc == 1)
 		goto out;
 
-	while ((opt = getopt(argc, argv, "vcl:")) != EOF) {
-		char *tmp = NULL;
-
+	while ((opt = getopt(argc, argv, "vc")) != EOF) {
 		switch (opt) {
 		case 'v':
 			mode_flag |= DETAIL;
 			break;
 		case 'c':
 			mode_flag |= STATISTIC;
-			break;
-		case 'l':
-			defrag_limit = strtoul(optarg, &tmp, 0);
-			if (*tmp) {
-				printf("Illegal number for defrag limit\n");
-				goto out;
-			}
 			break;
 		default:
 			goto out;
@@ -1720,9 +1705,6 @@ int main(int argc, char *argv[])
 		goto out;
 
 	current_uid = getuid();
-	total_defrag_size = 0;
-	if (defrag_limit == 0)
-		defrag_limit = ULONG_MAX;
 
 	/* Main process */
 	for (i = optind; i < argc; i++) {
@@ -1837,7 +1819,6 @@ int main(int argc, char *argv[])
 		}
 
 		switch (arg_type) {
-			int mount_dir_len = 0;
 
 		case DIRNAME:
 			if (!(mode_flag & STATISTIC))
@@ -1849,11 +1830,11 @@ int main(int argc, char *argv[])
 			strncat(lost_found_dir, "/lost+found",
 				PATH_MAX - strnlen(lost_found_dir, PATH_MAX));
 
-			/* Not the case("e4defrag  mount_piont_dir") */
+			/* Not the case("e4defrag  mount_point_dir") */
 			if (dir_name[mount_dir_len] != '\0') {
 				/*
-				 * "e4defrag mount_piont_dir/lost+found"
-				 * or "e4defrag mount_piont_dir/lost+found/"
+				 * "e4defrag mount_point_dir/lost+found"
+				 * or "e4defrag mount_point_dir/lost+found/"
 				 */
 				if (strncmp(lost_found_dir, dir_name,
 					    strnlen(lost_found_dir,
@@ -1867,9 +1848,10 @@ int main(int argc, char *argv[])
 					continue;
 				}
 
-				/* "e4defrag mount_piont_dir/else_dir" */
+				/* "e4defrag mount_point_dir/else_dir" */
 				memset(lost_found_dir, 0, PATH_MAX + 1);
 			}
+			/* fall through */
 		case DEVNAME:
 			if (arg_type == DEVNAME) {
 				strncpy(lost_found_dir, dir_name,
@@ -1936,8 +1918,6 @@ int main(int argc, char *argv[])
 				total_count);
 			printf("\tFailure:\t\t\t[ %u/%u ]\n",
 				total_count - succeed_cnt, total_count);
-			printf("\tDefrag size:\t\t\t[ %lu ]\n",
-				total_defrag_size);
 			if (mode_flag & DETAIL) {
 				printf("\tTotal extents:\t\t\t%4d->%d\n",
 					extents_before_defrag,

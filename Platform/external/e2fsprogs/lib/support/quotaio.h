@@ -12,7 +12,7 @@
  *
  *	quota_init_context(&qctx, fs, QUOTA_ALL_BIT);
  *	{
- *		quota_compute_usage(qctx, QUOTA_ALL_BIT);
+ *		quota_compute_usage(qctx);
  *		AND/OR
  *		quota_data_add/quota_data_sub/quota_data_inodes();
  *	}
@@ -66,7 +66,6 @@ struct quota_ctx {
 	ext2_filsys	fs;
 	struct dict_t	*quota_dict[MAXQUOTAS];
 	struct quota_handle *quota_file[MAXQUOTAS];
-	qsize_t before_orphan_blocks;
 };
 
 /*
@@ -244,7 +243,7 @@ int parse_quota_types(const char *in_str, unsigned int *qtype_bits,
  * Return pointer to reserved inode field in superblock for given quota type.
  *
  * This allows the caller to get or set the quota inode by type without the
- * need for the quota array to be contiguous in the superbock.
+ * need for the quota array to be contiguous in the superblock.
  */
 static inline ext2_ino_t *quota_sb_inump(struct ext2_super_block *sb,
 					 enum quota_type qtype)

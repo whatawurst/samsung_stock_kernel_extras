@@ -4,6 +4,7 @@ cc_binary {
     name: "resize2fs",
     host_supported: true,
     defaults: ["e2fsprogs-defaults"],
+    recovery_available: true,
 
     srcs: [
         "extent.c",

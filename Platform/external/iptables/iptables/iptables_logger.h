@@ -1,5 +1,5 @@
 #ifndef _IPTABLES_LOGGER
-#define _IPTABLES_LOGGER 
+#define _IPTABLES_LOGGER
 
 #include <android/log.h>
 #include <time.h>
@@ -22,7 +22,7 @@ static char *log_error[] = { "error", };
 extern void iptables_log(int argc, char *argv[]);
 extern void __attribute__((noreturn)) __exit(int err);
 #else
-static void iptables_log(int argc, char *argv[]) {}
-static void __attribute__((noreturn)) __exit(int err) {exit(err);}
+inline static void iptables_log(int argc, char *argv[]) {}
+inline static void __attribute__((noreturn)) __exit(int err) {exit(err);}
 #endif
 #endif

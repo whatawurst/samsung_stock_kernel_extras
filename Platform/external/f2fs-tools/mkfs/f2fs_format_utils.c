@@ -16,6 +16,10 @@
 #define _GNU_SOURCE
 #endif
 
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include <f2fs_fs.h>
 
 #include <stdio.h>
@@ -41,6 +45,53 @@
 #define BLKSECDISCARD	_IO(0x12,125)
 #endif
 
+#define SEC_MAGIC_START	(8192)
+
+enum TRIM_STEP_MAGIC {
+	TRIM_STEP_MAGIC_1 = 0,
+	TRIM_STEP_MAGIC_2,
+	TRIM_STEP_MAGIC_MAX,
+};
+
+static const char trim_magic_1[16] = "BEFORE_DISCARD";
+static const char trim_magic_2[16] = "AFTER_DISCARD";
+
+static int trim_update_magic(int step)
+{
+	u_int8_t *buf;
+	int ret = 0;
+
+	buf = calloc(F2FS_BLKSIZE, 1);
+	if (!buf) {
+		MSG(0, "\tError: Failed to alloc memory for magic!!!\n");
+		return -1;
+	}
+
+	if (step == TRIM_STEP_MAGIC_1) {
+		memcpy(buf, trim_magic_1, sizeof(trim_magic_1));
+	} else if (step == TRIM_STEP_MAGIC_2) {
+		memcpy(buf, trim_magic_2, sizeof(trim_magic_2));
+	} else {
+		MSG(0, "\tSkip update magic: step is wrong!!!\n");
+		goto exit;
+	}
+
+	if (dev_write_block(buf, 0) < 0) {
+		MSG(0, "\tError: Failed to write magic!!!\n");
+		ret = -1;
+		goto exit;
+	}
+
+	if (f2fs_fsync_device() < 0) {
+		MSG(0, "\tError: Failed to fsync for magic!!!\n");
+		ret = -1;
+		goto exit;
+	}
+exit:
+	free(buf);
+	return ret;
+}
+
 static int trim_device(int i)
 {
 #ifndef ANDROID_WINDOWS_HOST
@@ -51,14 +102,19 @@ static int trim_device(int i)
 	int fd = dev->fd;
 
 	stat_buf = malloc(sizeof(struct stat));
+	if (stat_buf == NULL) {
+		MSG(1, "\tError: Malloc Failed for trim_stat_buf!!!\n");
+		return -1;
+	}
+
 	if (fstat(fd, stat_buf) < 0 ) {
 		MSG(1, "\tError: Failed to get the device stat!!!\n");
 		free(stat_buf);
 		return -1;
 	}
 
-	range[0] = 0;
-	range[1] = bytes;
+	range[0] = (i == 0) ? SEC_MAGIC_START : 0;
+	range[1] = bytes - range[0];
 
 #if defined(WITH_BLKDISCARD) && defined(BLKDISCARD)
 	MSG(0, "Info: [%s] Discarding device\n", dev->path);
@@ -103,11 +159,24 @@ static int trim_device(int i)
 
 int f2fs_trim_devices(void)
 {
-	int i;
+	int i, err = 0;
+
+	err = trim_update_magic(TRIM_STEP_MAGIC_1);
+	if (err < 0) {
+		MSG(0, "\tError: Failed to update magic1!!!\n");
+		return -1;
+	}
 
 	for (i = 0; i < c.ndevs; i++)
 		if (trim_device(i))
 			return -1;
+
+	err = trim_update_magic(TRIM_STEP_MAGIC_2);
+	if (err < 0) {
+		MSG(0, "\tError: Failed to update magic2!!!\n");
+		return -1;
+	}
+
 	c.trimmed = 1;
 	return 0;
 }

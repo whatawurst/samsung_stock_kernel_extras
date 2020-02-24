@@ -57,12 +57,12 @@ extern struct qdisc_util htb_qdisc_util;
 extern struct qdisc_util ingress_qdisc_util;
 extern struct filter_util basic_filter_util;
 extern struct filter_util u32_filter_util;
-#ifdef FEATURE_PRIO
+extern struct qdisc_util multiq_qdisc_util;
+
 extern struct filter_util fw_filter_util;
 extern struct qdisc_util prio_qdisc_util;
 extern struct qdisc_util pfifo_fast_qdisc_util;
 extern struct qdisc_util pfifo_qdisc_util;
-#endif
 #endif
 
 static int print_noqopt(struct qdisc_util *qu, FILE *f,
@@ -126,14 +126,16 @@ struct qdisc_util *get_qdisc_kind(const char *str)
 		return &htb_qdisc_util;
 	else if (!strcmp(str, "ingress"))
 		return &ingress_qdisc_util;
-#ifdef FEATURE_PRIO
+	else if (!strcmp(str, "multiq"))
+		return &multiq_qdisc_util;
+
 	else if (!strcmp(str, "pfifo_fast"))
 		return &pfifo_fast_qdisc_util;
 	else if (!strcmp(str, "prio"))
 		return &prio_qdisc_util;
 	else if (!strcmp(str, "pfifo"))
 		return &pfifo_qdisc_util;
-#endif
+
 	else {
 		fprintf(stderr, "Android does not support qdisc '%s'\n", str);
 		return NULL;
@@ -185,14 +187,12 @@ struct filter_util *get_filter_kind(const char *str)
 #ifdef ANDROID
 	if (!strcmp(str, "u32"))
 		return &u32_filter_util;
-#ifdef EPDG_FLAG
 	else if (!strcmp(str, "basic"))
 		return &basic_filter_util;
-#endif
-#ifdef FEATURE_PRIO
+
 	else if (!strcmp(str, "fw"))
 		return &fw_filter_util;
-#endif
+
 	else {
 		fprintf(stderr, "Android does not support filter '%s'\n", str);
 		return NULL;
@@ -237,11 +237,7 @@ noexist:
 static void usage(void)
 {
 	fprintf(stderr, "Usage: tc [ OPTIONS ] OBJECT { COMMAND | help }\n"
-#ifdef ANDROID
-			"       tc [-force]\n"
-#else
 			"       tc [-force] -batch filename\n"
-#endif
 			"where  OBJECT := { qdisc | class | filter | action | monitor | exec }\n"
 	                "       OPTIONS := { -s[tatistics] | -d[etails] | -r[aw] | -p[retty] | -b[atch] [filename] | -n[etns] name |\n"
 			"                    -nm | -nam[es] | { -cf | -conf } path }\n");
@@ -271,7 +267,6 @@ static int do_cmd(int argc, char **argv)
 	return -1;
 }
 
-#ifndef ANDROID
 static int batch(const char *name)
 {
 	char *line = NULL;
@@ -316,15 +311,12 @@ static int batch(const char *name)
 	rtnl_close(&rth);
 	return ret;
 }
-#endif
 
 
 int main(int argc, char **argv)
 {
 	int ret;
-#ifndef ANDROID
 	char *batch_file = NULL;
-#endif
 
 	while (argc > 1) {
 		if (argv[1][0] != '-')
@@ -350,13 +342,11 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (matches(argv[1], "-force") == 0) {
 			++force;
-#ifndef ANDROID
 		} else if (matches(argv[1], "-batch") == 0) {
 			argc--;	argv++;
 			if (argc <= 1)
 				usage();
 			batch_file = argv[1];
-#endif
 		} else if (matches(argv[1], "-netns") == 0) {
 			NEXT_ARG();
 			if (netns_switch(argv[1]))
@@ -380,10 +370,8 @@ int main(int argc, char **argv)
 		argc--;	argv++;
 	}
 
-#ifndef ANDROID
 	if (batch_file)
 		return batch(batch_file);
-#endif
 
 	if (argc <= 1) {
 		usage();
