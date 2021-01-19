@@ -4,6 +4,7 @@
                 From android git server, codesourcery and etc ..
                 - toolchain/gcc-cfp/gcc-cfp-jopp-only/aarch64-linux-android-4.9/bin/aarch64-linux-android-
                 - toolchain/clang/host/linux-x86/clang-4639204-cfp-jopp/bin/aarch64-linux-gnu-
+                
         - edit Makefile
                 edit "CROSS_COMPILE" to right toolchain path(You downloaded).
                         EX)  CROSS_COMPILE=<android platform directory you download>/android/prebuilts/gcc-cfp/gcc-cfp-jopp-only/aarch64-linux-android-4.9/bin/aarch64-linux-android-
@@ -13,11 +14,13 @@
                         EX)  CC=/usr/local/toolchain/clang/host/linux-x86/clang-4639204-cfp-jopp/bin/clang // check the location of toolchain
                 edit "CLANG_TRIPLE" to right path(You downloaded).
                         EX)  CLANG_TRIPLE=<android platform directory you download>/android/prebuilts/clang/host/linux-x86/clang-4639204-cfp-jopp/bin/aarch64-linux-gnu-
-                        EX)  CLANG_TRIPLE=/usr/local/toolchain/clang/host/linux-x86/clang-4639204-cfp-jopp/bin/aarch64-linux-gnu- // check the location of toolchain     
+                        EX)  CLANG_TRIPLE=/usr/local/toolchain/clang/host/linux-x86/clang-4639204-cfp-jopp/bin/aarch64-linux-gnu- // check the location of toolchain   
         - to Build
-                $ export ANDROID_MAJOR_VERSION=p
-                $ make ARCH=arm64 exynos9820-beyond0lte_defconfig
-                $ make ARCH=arm64
+                $ export PLATFORM_VERSION=11
+                $ export ANDROID_MAJOR_VERSION=r
+                $ export ARCH=arm64
+                $ make exynos9820-beyond0lte_defconfig
+                $ make
 
 2. Output files
         - Kernel : arch/arm64/boot/Image

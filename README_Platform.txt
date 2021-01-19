@@ -4,7 +4,7 @@ How to build Module for Platform
 
 [Step to build]
 1. Get android open source.
-    : version info - Android 10.0
+    : version info - Android 11.0
     ( Download site : http://source.android.com )
 
 2. Copy module that you want to build - to original android open source
@@ -45,22 +45,24 @@ PRODUCT_PACKAGES += \
    ./build_64bit.sh
 
 5. Note : 
-   To download the source code of S/W listed below, please visit http://opensource.samsung.com and find ¡°Mobile -> Mobile Application¡± menu, 
+   To download the source code of S/W listed below, please visit http://opensource.samsung.com and find "Mobile -> Mobile Application" menu, 
    and then, you will be able to download what you want. 
    You might save time in finding the right one by making use of the search keyword below. 
-
-   - Notes31.apk : "Samsung Notes"
-   - MdecService : "MdecService"
-   - SmartSwitch.apk : "Smart Switch" (Version : 3.4)            
-   - SamsungMessages_10.0.apk : "Messaging"
-   - SecEmail_P.apk : "Email"
-   - SBrowser_10.0_Removable.apk : "SBrowser" (version : SBrowser v10)      
-   - SamsungConnect.apk : "SamsungConnect"
-   - KidsHome_Installer.apk : "KidsHome"
-   - SamsungCamera.apk : "Camera8"
-   - AREmoji.apk : "AREmoji"
-   - Fmm.apk : "FMM"   
-   - BixbyVisionFramework3.apk: "BixbyVisionFramework"
-   - VoiceNote_5.0.apk : "Voice Recorder"
-   - DeXonPC.apk : "DeXonPC"
-   - LightweightWebEngine.apk : "lightweight-web-engine"
+   
+	- ShareLive.apk : "ShareLive"
+	- MdecService.apk : "MdecService"
+	- SBrowser_13.0_Removable.apk : "SBrowser"
+	- Notes40_Removable.apk : "Samsung Notes"
+	- AREmoji.apk : "AREmoji"
+	- VoiceNote_5.0.apk : "Voice Recorder"
+	- SecEmail_P.apk : "Email"
+	- DeXonPC.apk : "DeXonPC"
+	- SmartSwitch.apk : "Smart Switch"
+	- SamsungCamera.apk : "Camera"
+	- Fmm.apk : "FMM"
+	- SamsungPass.apk : "SamsungPass"
+	- KidsHome.apk : "KidsHome"
+	- SamsungMessages_12.apk : "Messaging"
+	- LiveStickers.apk : "LiveStickers"
+	- SamsungCalendar.apk : "SamsungCalendar"
+	- SamsungConnect.apk : "SamsungConnect"
